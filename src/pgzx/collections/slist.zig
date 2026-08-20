@@ -13,9 +13,21 @@ pub fn SList(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type 
         const Self = @This();
         const Iterator = SListIter(T, node_field);
 
-        usingnamespace SListMeta(T, node_field);
+        const meta = SListMeta(T, node_field);
 
         head: pg.slist_head,
+
+        inline fn nodePtr(v: *T) *pg.slist_node {
+            return meta.nodePtr(v);
+        }
+
+        inline fn nodeParentPtr(n: *pg.slist_node) ?*T {
+            return meta.nodeParentPtr(n);
+        }
+
+        inline fn optNodeParentPtr(n: ?*pg.slist_node) ?*T {
+            return meta.optNodeParentPtr(n);
+        }
 
         pub inline fn init() Self {
             var h = Self{ .head = undefined };
@@ -86,9 +98,13 @@ pub fn SList(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type 
 pub fn SListIter(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type {
     return struct {
         const Self = @This();
-        usingnamespace SListMeta(T, node_field);
+        const meta = SListMeta(T, node_field);
 
         iter: pg.slist_iter,
+
+        inline fn nodeParentPtr(n: *pg.slist_node) ?*T {
+            return meta.nodeParentPtr(n);
+        }
 
         pub inline fn next(self: *Self) ?*T {
             if (self.iter.cur == null) return null;

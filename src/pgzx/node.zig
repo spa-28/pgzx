@@ -39,7 +39,7 @@ pub inline fn boolVal(node: anytype) bool {
 }
 
 pub inline fn make(comptime T: type) *T {
-    const node: *pg.Node = @ptrCast(@alignCast(pg.palloc0fast(@sizeOf(T))));
+    const node: *pg.Node = @ptrCast(@alignCast(pg.palloc0(@sizeOf(T))));
     node.*.type = @intFromEnum(mustFindTag(T));
     return @ptrCast(@alignCast(node));
 }

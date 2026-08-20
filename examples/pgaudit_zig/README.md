@@ -153,10 +153,10 @@ In the `_PG_init` function, we register the hooks we want to use. This is done p
     pg.ExecutorCheckPerms_hook = pgaudit_zig_ExecutorCheckPerms_hook;
 ```
 
-The hooks implementation need to respect the function signature of the hooks, and are marked with `callconv(.C)`:
+The hooks implementation need to respect the function signature of the hooks, and are marked with `callconv(.c)`:
 
 ```zig
-fn pgaudit_zig_ExecutorStart_hook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) callconv(.C) void {
+fn pgaudit_zig_ExecutorStart_hook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) callconv(.c) void {
     std.log.debug("pgaudit_zig: ExecutorStart_hook\n", .{});
 
     executorStartHook(queryDesc, eflags) catch |err| {

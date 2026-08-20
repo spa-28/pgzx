@@ -78,7 +78,10 @@ pub export fn _PG_init() void {
     pg.ExecutorFinish_hook = pgaudit_zig_ExecutorFinish_hook;
 
     prev_ExecutorCheckPerms_hook = pg.ExecutorCheckPerms_hook;
-    pg.ExecutorCheckPerms_hook = pgaudit_zig_ExecutorCheckPerms_hook;
+    pg.ExecutorCheckPerms_hook = if (pg.PG_VERSION_NUM >= 160000)
+        pgaudit_zig_ExecutorCheckPerms_hook
+    else
+        pgaudit_zig_ExecutorCheckPerms_hook_pg15;
 
     std.log.debug("pgaudit_zig: hooks installed\n", .{});
 }
@@ -95,7 +98,7 @@ fn getAuditList() error{PGErrorStack}!*std.ArrayList(*AuditEvent) {
     global_memctx = pgzx.mem.createAllocSetContext("pgaudit_zig_context_global", .{ .parent = pg.TopMemoryContext }) catch |err| {
         return pgzx.elog.Error(@src(), "pgaudit_zig: failed to create memory context: {}\n", .{err});
     };
-    audit_events_list = std.ArrayList(*AuditEvent).init(global_memctx.allocator());
+    audit_events_list = std.ArrayList(*AuditEvent).empty;
     return &audit_events_list.?;
 }
 
@@ -113,7 +116,7 @@ fn executorStartHook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) !void {
     };
 
     var audit_list = try getAuditList();
-    try audit_list.append(event);
+    try audit_list.append(global_memctx.allocator(), event);
 
     if (prev_ExecutorStart_hook) |hook| {
         hook(queryDesc, eflags);
@@ -131,7 +134,7 @@ fn executorStartHook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) !void {
     );
 }
 
-fn pgaudit_zig_ExecutorStart_hook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) callconv(.C) void {
+fn pgaudit_zig_ExecutorStart_hook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) callconv(.c) void {
     std.log.debug("pgaudit_zig: ExecutorStart_hook\n", .{});
 
     executorStartHook(queryDesc, eflags) catch |err| {
@@ -139,16 +142,15 @@ fn pgaudit_zig_ExecutorStart_hook(queryDesc: [*c]pg.QueryDesc, eflags: c_int) ca
     };
 }
 
-fn executorCheckPermsHook(rangeTables: [*c]pg.List, rtePermInfos: [*c]pg.List, violation: bool) error{ OutOfMemory, EventNotFound, PGErrorStack }!bool {
+fn executorCheckPermsHook(rangeTables: [*c]pg.List, violation: bool) error{ OutOfMemory, EventNotFound, PGErrorStack }!bool {
     _ = violation;
-    _ = rtePermInfos;
 
     const list = try getAuditList();
     const event = list.getLast();
     var allocator = event.memctx.allocator();
 
-    var relList = std.ArrayList(RelEntry).init(allocator);
-    errdefer relList.deinit();
+    var relList = std.ArrayList(RelEntry).empty;
+    errdefer relList.deinit(allocator);
 
     var errctx = pgzx.err.Context.init();
     defer errctx.deinit();
@@ -171,7 +173,7 @@ fn executorCheckPermsHook(rangeTables: [*c]pg.List, rtePermInfos: [*c]pg.List, v
                 .rel_namespace_oid = relNamespaceOid,
                 .rel_namespace_name = try allocator.dupe(u8, std.mem.span(namespaceName)),
             };
-            try relList.append(relEntry);
+            try relList.append(allocator, relEntry);
 
             std.log.debug("pgaudit_zig: ExecutorCheckPerms_hook: relNamespaceOid: {}, relOid: {}\n", .{ relNamespaceOid, relOid });
             std.log.debug("pgaudit_zig: ExecutorCheckPerms_hook: namespace: {s}, rel: {s}\n", .{ namespaceName, relName });
@@ -184,17 +186,29 @@ fn executorCheckPermsHook(rangeTables: [*c]pg.List, rtePermInfos: [*c]pg.List, v
     return true;
 }
 
-pub fn pgaudit_zig_ExecutorCheckPerms_hook(rangeTables: [*c]pg.List, rtePermInfos: [*c]pg.List, violation: bool) callconv(.C) bool {
-    std.log.debug("pgaudit_zig: ExecutorCheckPerms_hook\n", .{});
-
-    return executorCheckPermsHook(rangeTables, rtePermInfos, violation) catch |err| {
+fn executorCheckPermsHookImpl(rangeTables: [*c]pg.List, violation: bool) bool {
+    return executorCheckPermsHook(rangeTables, violation) catch |err| {
         // Forward reported errors to the postgres error stack.
         pgzx.elog.throwAsPostgresError(@src(), err);
         unreachable;
     };
 }
 
-fn pgaudit_zig_ExecutorFinish_hook(queryDesc: [*c]pg.QueryDesc) callconv(.C) void {
+// ExecutorCheckPerms_hook gained the rtePermInfos argument in PG16.
+pub fn pgaudit_zig_ExecutorCheckPerms_hook(rangeTables: [*c]pg.List, rtePermInfos: [*c]pg.List, violation: bool) callconv(.c) bool {
+    std.log.debug("pgaudit_zig: ExecutorCheckPerms_hook\n", .{});
+    _ = rtePermInfos;
+
+    return executorCheckPermsHookImpl(rangeTables, violation);
+}
+
+pub fn pgaudit_zig_ExecutorCheckPerms_hook_pg15(rangeTables: [*c]pg.List, violation: bool) callconv(.c) bool {
+    std.log.debug("pgaudit_zig: ExecutorCheckPerms_hook\n", .{});
+
+    return executorCheckPermsHookImpl(rangeTables, violation);
+}
+
+fn pgaudit_zig_ExecutorFinish_hook(queryDesc: [*c]pg.QueryDesc) callconv(.c) void {
     std.log.debug("pgaudit_zig: ExecutorFinish_hook\n", .{});
 
     const queryContext = queryDesc.*.estate.*.es_query_cxt;
@@ -249,9 +263,9 @@ fn pgaudit_zig_MemoryContextCallback(memctx: pg.MemoryContext) void {
     freeEvent(event);
 }
 
-fn eventToJSON(event: *AuditEvent, writer: std.ArrayList(u8).Writer) !void {
+fn eventToJSON(event: *AuditEvent, writer: *std.Io.Writer) !void {
     _ = try writer.write("{\"operation\": ");
-    try std.json.encodeJsonString(@tagName(event.command), .{}, writer);
+    try std.json.Stringify.encodeJsonString(@tagName(event.command), .{}, writer);
 
     if (event.relations) |relations| {
         _ = try writer.write(", \"relations\": [");
@@ -262,13 +276,13 @@ fn eventToJSON(event: *AuditEvent, writer: std.ArrayList(u8).Writer) !void {
             }
             _ = try writer.write("{");
             _ = try writer.write("\"relOid\": ");
-            try std.fmt.format(writer, "{d}", .{rel.rel_oid});
+            try writer.print("{d}", .{rel.rel_oid});
             _ = try writer.write(", \"relname\": ");
-            try std.json.encodeJsonString(rel.rel_name, .{}, writer);
+            try std.json.Stringify.encodeJsonString(rel.rel_name, .{}, writer);
             _ = try writer.write(", \"namespaceOid\": ");
-            try std.fmt.format(writer, "{d}", .{rel.rel_namespace_oid});
+            try writer.print("{d}", .{rel.rel_namespace_oid});
             _ = try writer.write(", \"relnamespaceName\": ");
-            try std.json.encodeJsonString(rel.rel_namespace_name, .{}, writer);
+            try std.json.Stringify.encodeJsonString(rel.rel_namespace_name, .{}, writer);
             _ = try writer.write("}");
         }
         _ = try writer.write("]");
@@ -276,7 +290,7 @@ fn eventToJSON(event: *AuditEvent, writer: std.ArrayList(u8).Writer) !void {
 
     if (settings.log_statement.value) {
         _ = try writer.write(", \"commandText\": ");
-        try std.json.encodeJsonString(event.commandText, .{}, writer);
+        try std.json.Stringify.encodeJsonString(event.commandText, .{}, writer);
     }
     _ = try writer.write("}");
 }
@@ -284,11 +298,12 @@ fn eventToJSON(event: *AuditEvent, writer: std.ArrayList(u8).Writer) !void {
 fn logAuditEvent(event: *AuditEvent) !void {
     std.log.debug("pgaudit_zig: logAuditEvent\n", .{});
 
-    var string = std.ArrayList(u8).init(pgzx.mem.PGCurrentContextAllocator);
-    defer string.deinit();
-    const writer = string.writer();
+    var string = std.ArrayList(u8).empty;
+    defer string.deinit(pgzx.mem.PGCurrentContextAllocator);
+    var str_writer: std.Io.Writer.Allocating = .fromArrayList(pgzx.mem.PGCurrentContextAllocator, &string);
 
-    try eventToJSON(event, writer);
+    try eventToJSON(event, &str_writer.writer);
+    try str_writer.writer.flush();
 
     std.log.debug("pgaudit_zig: logAuditEvent: {s}\n", .{string.items});
 }
@@ -312,7 +327,7 @@ const Tests = struct {
         };
 
         const list = try getAuditList();
-        try list.append(event);
+        try list.append(global_memctx.allocator(), event);
 
         const last = list.getLast();
         try std.testing.expectEqual(event, last);
@@ -335,11 +350,12 @@ const Tests = struct {
             .memctx = memctx,
         };
 
-        var string = std.ArrayList(u8).init(allocator);
-        defer string.deinit();
-        const writer = string.writer();
+        var string = std.ArrayList(u8).empty;
+        defer string.deinit(allocator);
+        var str_writer: std.Io.Writer.Allocating = .fromArrayList(allocator, &string);
 
-        try eventToJSON(&event, writer);
+        try eventToJSON(&event, &str_writer.writer);
+        try str_writer.writer.flush();
 
         const expected =
             \\{"operation": "CMD_SELECT", "commandText": "select test()"}

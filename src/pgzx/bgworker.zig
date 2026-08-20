@@ -99,9 +99,9 @@ pub fn checkLen(comptime str: []const u8, into: anytype) void {
     }
 }
 
-pub inline fn sigFlagHandler(sig: *pgzx.intr.Signal) fn (c_int) callconv(.C) void {
+pub inline fn sigFlagHandler(sig: *pgzx.intr.Signal) fn (c_int) callconv(.c) void {
     return struct {
-        fn handler(num: c_int) callconv(.C) void {
+        fn handler(num: c_int) callconv(.c) void {
             sig.set(1);
             finalizeSignal(num);
         }

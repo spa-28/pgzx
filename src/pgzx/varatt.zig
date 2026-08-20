@@ -43,65 +43,65 @@ pub inline fn VARTAG_IS_EXPANDED(tag: anytype) @TypeOf((tag & ~@as(c_int, 1)) ==
     return (tag & ~@as(c_int, 1)) == VARTAG_EXPANDED_RO;
 }
 
-pub inline fn VARTAG_SIZE(tag: anytype) @TypeOf(if (tag == VARTAG_INDIRECT) @import("std").zig.c_translation.sizeof(varatt_indirect) else if (VARTAG_IS_EXPANDED(tag)) @import("std").zig.c_translation.sizeof(varatt_expanded) else if (tag == VARTAG_ONDISK) @import("std").zig.c_translation.sizeof(varatt_external) else blk_2: {
+pub inline fn VARTAG_SIZE(tag: anytype) @TypeOf(if (tag == VARTAG_INDIRECT) @sizeOf(varatt_indirect) else if (VARTAG_IS_EXPANDED(tag)) @sizeOf(varatt_expanded) else if (tag == VARTAG_ONDISK) @sizeOf(varatt_external) else blk_2: {
     break :blk_2 @as(c_int, 0);
 }) {
-    return if (tag == VARTAG_INDIRECT) @import("std").zig.c_translation.sizeof(varatt_indirect) else if (VARTAG_IS_EXPANDED(tag)) @import("std").zig.c_translation.sizeof(varatt_expanded) else if (tag == VARTAG_ONDISK) @import("std").zig.c_translation.sizeof(varatt_external) else blk_2: {
+    return if (tag == VARTAG_INDIRECT) @sizeOf(varatt_indirect) else if (VARTAG_IS_EXPANDED(tag)) @sizeOf(varatt_expanded) else if (tag == VARTAG_ONDISK) @sizeOf(varatt_external) else blk_2: {
         break :blk_2 @as(c_int, 0);
     };
 }
 
-pub inline fn VARATT_IS_4B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x00)) {
-    return (@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x00);
+pub inline fn VARATT_IS_4B(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x00)) {
+    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x00);
 }
 
-pub inline fn VARATT_IS_4B_U(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x00)) {
-    return (@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x00);
+pub inline fn VARATT_IS_4B_U(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x00)) {
+    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x00);
 }
 
-pub inline fn VARATT_IS_4B_C(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x02)) {
-    return (@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x02);
+pub inline fn VARATT_IS_4B_C(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x02)) {
+    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x02);
 }
 
-pub inline fn VARATT_IS_1B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x01)) {
-    return (@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x01);
+pub inline fn VARATT_IS_1B(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x01)) {
+    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x01);
 }
 
-pub inline fn VARATT_IS_1B_E(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header == @as(c_int, 0x01)) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header == @as(c_int, 0x01);
+pub inline fn VARATT_IS_1B_E(PTR: anytype) @TypeOf(@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header == @as(c_int, 0x01)) {
+    return @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header == @as(c_int, 0x01);
 }
 
-pub inline fn VARATT_NOT_PAD_BYTE(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]pg.uint8, PTR).* != @as(c_int, 0)) {
-    return @import("std").zig.c_translation.cast([*c]pg.uint8, PTR).* != @as(c_int, 0);
+pub inline fn VARATT_NOT_PAD_BYTE(PTR: anytype) @TypeOf(@as([*c]pg.uint8, @ptrCast(@alignCast(PTR))).* != @as(c_int, 0)) {
+    return @as([*c]pg.uint8, @ptrCast(@alignCast(PTR))).* != @as(c_int, 0);
 }
 
-pub inline fn VARSIZE_4B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF)) {
+pub inline fn VARSIZE_4B(PTR: anytype) @TypeOf((@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF)) {
     _ = &PTR;
-    return (@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF);
+    return (@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF);
 }
 
-pub inline fn VARSIZE_1B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F)) {
-    return (@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F);
+pub inline fn VARSIZE_1B(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F)) {
+    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F);
 }
 
-pub inline fn VARTAG_1B_E(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_1b_e, PTR).*.va_tag) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_1b_e, PTR).*.va_tag;
+pub inline fn VARTAG_1B_E(PTR: anytype) @TypeOf(@as([*c]varattrib_1b_e, @ptrCast(@alignCast(PTR))).*.va_tag) {
+    return @as([*c]varattrib_1b_e, @ptrCast(@alignCast(PTR))).*.va_tag;
 }
 
-pub inline fn VARDATA_4B(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_data()) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_data();
+pub inline fn VARDATA_4B(PTR: anytype) @TypeOf(@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_data()) {
+    return @as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_data();
 }
 
-pub inline fn VARDATA_4B_C(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_compressed.va_data) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_compressed.va_data;
+pub inline fn VARDATA_4B_C(PTR: anytype) @TypeOf(@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_compressed.va_data) {
+    return @as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_compressed.va_data;
 }
 
-pub inline fn VARDATA_1B(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_data()) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_data();
+pub inline fn VARDATA_1B(PTR: anytype) @TypeOf(@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_data()) {
+    return @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_data();
 }
 
-pub inline fn VARDATA_1B_E(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_1b_e, PTR).*.va_data()) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_1b_e, PTR).*.va_data;
+pub inline fn VARDATA_1B_E(PTR: anytype) @TypeOf(@as([*c]varattrib_1b_e, @ptrCast(@alignCast(PTR))).*.va_data()) {
+    return @as([*c]varattrib_1b_e, @ptrCast(@alignCast(PTR))).*.va_data;
 }
 
 pub const VARATT_SHORT_MAX = @as(c_int, 0x7F);
@@ -202,9 +202,9 @@ pub inline fn VARSIZE_ANY(PTR: anytype) @TypeOf(if (VARATT_IS_1B_E(PTR)) VARSIZE
     return if (VARATT_IS_1B_E(PTR)) VARSIZE_EXTERNAL(PTR) else if (VARATT_IS_1B(PTR)) VARSIZE_1B(PTR) else VARSIZE_4B(PTR);
 }
 
-pub inline fn VARSIZE_ANY_EXHDR(PTR: anytype) @TypeOf(if (VARATT_IS_1B_E(PTR)) VARSIZE_EXTERNAL(PTR) - VARHDRSZ_EXTERNAL else if (VARATT_IS_1B(PTR)) VARSIZE_1B(PTR) - VARHDRSZ_SHORT else VARSIZE_4B(PTR) - VARHDRSZ) {
+pub inline fn VARSIZE_ANY_EXHDR(PTR: anytype) @TypeOf(if (VARATT_IS_1B_E(PTR)) @as(usize, @intCast(VARSIZE_EXTERNAL(PTR) - VARHDRSZ_EXTERNAL)) else if (VARATT_IS_1B(PTR)) @as(usize, @intCast(VARSIZE_1B(PTR) - VARHDRSZ_SHORT)) else @as(usize, @intCast(VARSIZE_4B(PTR) - VARHDRSZ))) {
     _ = &PTR;
-    return if (VARATT_IS_1B_E(PTR)) VARSIZE_EXTERNAL(PTR) - VARHDRSZ_EXTERNAL else if (VARATT_IS_1B(PTR)) VARSIZE_1B(PTR) - VARHDRSZ_SHORT else VARSIZE_4B(PTR) - VARHDRSZ;
+    return if (VARATT_IS_1B_E(PTR)) @as(usize, @intCast(VARSIZE_EXTERNAL(PTR) - VARHDRSZ_EXTERNAL)) else if (VARATT_IS_1B(PTR)) @as(usize, @intCast(VARSIZE_1B(PTR) - VARHDRSZ_SHORT)) else @as(usize, @intCast(VARSIZE_4B(PTR) - VARHDRSZ));
 }
 
 // pub inline fn VARSIZE_ANY_EXHDR(PTR: anytype) @TypeOf(if (VARATT_IS_1B_E(PTR)) VARSIZE_EXTERNAL(PTR) - VARHDRSZ_EXTERNAL else if (VARATT_IS_1B(PTR)) VARSIZE_1B(PTR) - VARHDRSZ_SHORT else VARSIZE_4B(PTR) - VARHDRSZ) {
@@ -215,12 +215,12 @@ pub inline fn VARDATA_ANY(PTR: anytype) @TypeOf(if (VARATT_IS_1B(PTR)) VARDATA_1
     return if (VARATT_IS_1B(PTR)) VARDATA_1B(PTR) else VARDATA_4B(PTR);
 }
 
-pub inline fn VARDATA_COMPRESSED_GET_EXTSIZE(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_compressed.va_tcinfo & VARLENA_EXTSIZE_MASK) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_compressed.va_tcinfo & VARLENA_EXTSIZE_MASK;
+pub inline fn VARDATA_COMPRESSED_GET_EXTSIZE(PTR: anytype) @TypeOf(@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_compressed.va_tcinfo & VARLENA_EXTSIZE_MASK) {
+    return @as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_compressed.va_tcinfo & VARLENA_EXTSIZE_MASK;
 }
 
-pub inline fn VARDATA_COMPRESSED_GET_COMPRESS_METHOD(PTR: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_compressed.va_tcinfo >> VARLENA_EXTSIZE_BITS) {
-    return @import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_compressed.va_tcinfo >> VARLENA_EXTSIZE_BITS;
+pub inline fn VARDATA_COMPRESSED_GET_COMPRESS_METHOD(PTR: anytype) @TypeOf(@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_compressed.va_tcinfo >> VARLENA_EXTSIZE_BITS) {
+    return @as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_compressed.va_tcinfo >> VARLENA_EXTSIZE_BITS;
 }
 
 pub inline fn VARATT_EXTERNAL_GET_EXTSIZE(toast_pointer: anytype) @TypeOf(toast_pointer.va_extinfo & VARLENA_EXTSIZE_MASK) {
