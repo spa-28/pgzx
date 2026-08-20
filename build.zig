@@ -72,6 +72,12 @@ pub fn build(b: *std.Build) void {
                 "-I", pgbuild.getIncludeServerDir(),
             },
         });
+        // Explicit path: for a non-native target (e.g. -Dtarget with a pinned
+        // glibc) zig does not search system library dirs, so "pq" would not
+        // be found via the native strategy.
+        module.addLibraryPath(.{
+            .cwd_relative = pgbuild.getLibDir(),
+        });
         module.linkSystemLibrary("pq", .{});
 
         break :blk module;
