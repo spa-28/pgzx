@@ -112,8 +112,6 @@ const includes = @cImport({
     @cInclude("nodes/lockoptions.h");
     @cInclude("nodes/makefuncs.h");
     @cInclude("nodes/memnodes.h");
-    @cInclude("nodes/miscnodes.h");
-    @cInclude("nodes/multibitmapset.h");
     @cInclude("nodes/nodeFuncs.h");
     @cInclude("nodes/nodes.h");
     @cInclude("nodes/params.h");
@@ -123,7 +121,6 @@ const includes = @cImport({
     @cInclude("nodes/plannodes.h");
     @cInclude("nodes/primnodes.h");
     @cInclude("nodes/print.h");
-    @cInclude("nodes/queryjumble.h");
     @cInclude("nodes/readfuncs.h");
     @cInclude("nodes/replnodes.h");
     @cInclude("nodes/subscripting.h");
@@ -176,7 +173,6 @@ const includes = @cImport({
     @cInclude("utils/datum.h");
     @cInclude("utils/datetime.h");
     @cInclude("utils/guc.h");
-    @cInclude("utils/guc_hooks.h");
     @cInclude("utils/guc_tables.h");
     @cInclude("utils/memutils.h");
     @cInclude("utils/wait_event.h");
