@@ -32,7 +32,14 @@ pub const PGCurrentContextAllocator: std.mem.Allocator = .{
 fn pgAlloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
     _ = ret_addr;
     _ = ctx;
-    return @ptrCast(pg.palloc_aligned(len, @intFromEnum(ptr_align), pg.MCXT_ALLOC_NO_OOM));
+    // PG15 has no aligned allocation API; fall back to the plain context
+    // alloc. ponytail: alignments >8 (MAXALIGN) are not honored on PG15 —
+    // fine for extension structs, revisit if SIMD-typed allocations appear.
+    if (comptime pg.PG_VERSION_NUM >= 160000) {
+        return @ptrCast(pg.palloc_aligned(len, @intFromEnum(ptr_align), pg.MCXT_ALLOC_NO_OOM));
+    } else {
+        return @ptrCast(pg.MemoryContextAllocExtended(pg.CurrentMemoryContext, len, pg.MCXT_ALLOC_NO_OOM));
+    }
 }
 
 fn pgFree(ctx: *anyopaque, buf: []u8, buf_align: std.mem.Alignment, ret_addr: usize) void {
@@ -277,7 +284,12 @@ pub const MemoryContextAllocator = struct {
         _ = ret_addr;
         const self: *MemoryContextAllocator = @ptrCast(@alignCast(ctx));
         const memctx = self.ctx;
-        const ptr = pg.MemoryContextAllocAligned(memctx, len, @intFromEnum(ptr_align), self.flags);
+        const ptr = if (comptime pg.PG_VERSION_NUM >= 160000)
+            pg.MemoryContextAllocAligned(memctx, len, @intFromEnum(ptr_align), self.flags)
+        else
+            // PG15: no aligned variant; flags are still honored, alignment
+            // degrades to MAXALIGN (8).
+            pg.MemoryContextAllocExtended(memctx, len, self.flags);
         return @ptrCast(ptr);
     }
 };
