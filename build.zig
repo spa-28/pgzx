@@ -24,25 +24,43 @@ pub fn build(b: *std.Build) void {
 
     // pgzx_pgsys module: C bindings to Postgres
     const pgzx_pgsys = blk: {
-        const module = b.addModule("pgzx_pgsys", .{
-            .root_source_file = b.path("./src/pgzx/c.zig"),
+        // Translate the Postgres headers once; the module wraps the result.
+        const translate_c = b.addTranslateC(.{
+            .root_source_file = b.path("./src/pgzx/c/include/headers.h"),
             .target = target,
             .optimize = optimize,
         });
 
-        // Internal C headers
-        module.addIncludePath(b.path("./src/pgzx/c/include/"));
-
-        // Postgres Headers
-        module.addIncludePath(.{
+        // Postgres headers first: PG headers included from subdirectories
+        // (e.g. storage/bufpage.h including "varatt.h") must resolve to the
+        // real files, with our c/include shims only as a fallback (PG15 has
+        // no server varatt.h at all).
+        translate_c.addIncludePath(.{
             .cwd_relative = pgbuild.getIncludeServerDir(),
         });
-        module.addIncludePath(.{
+
+        // Internal C headers (libpqsrv.h re-export, varatt.h PG15 shim)
+        translate_c.addIncludePath(b.path("./src/pgzx/c/include/"));
+
+        // Postgres Headers
+        translate_c.addIncludePath(.{
             .cwd_relative = pgbuild.getIncludeDir(),
         });
-        module.addLibraryPath(.{
-            .cwd_relative = pgbuild.getLibDir(),
+
+        // Host C headers: libpq-be.h pulls in openssl/ssl.h and gssapi.h.
+        // translate-c does not add the system include dirs on its own.
+        // The multiarch dir is where Debian keeps opensslconf.h.
+        translate_c.addIncludePath(.{
+            .cwd_relative = "/usr/include",
         });
+        translate_c.addIncludePath(.{
+            .cwd_relative = "/usr/include/x86_64-linux-gnu",
+        });
+
+        const module = translate_c.createModule();
+
+        // Internal C headers
+        module.addIncludePath(b.path("./src/pgzx/c/include/"));
 
         // libpq support
         module.addCSourceFiles(.{
@@ -62,14 +80,18 @@ pub fn build(b: *std.Build) void {
     // codegen
     // The codegen produces Zig files that are imported as modules by pgzx.
     const node_tags_src = blk: {
-        const tool = b.addExecutable(.{
-            .name = "gennodetags",
+        const tool_module = b.createModule(.{
             .root_source_file = b.path("./tools/gennodetags/main.zig"),
             .target = b.graph.host,
             .link_libc = true,
         });
-        tool.root_module.addIncludePath(.{ .cwd_relative = pgbuild.getIncludeServerDir() });
-        tool.root_module.addIncludePath(.{ .cwd_relative = pgbuild.getIncludeDir() });
+        tool_module.addIncludePath(.{ .cwd_relative = pgbuild.getIncludeServerDir() });
+        tool_module.addIncludePath(.{ .cwd_relative = pgbuild.getIncludeDir() });
+
+        const tool = b.addExecutable(.{
+            .name = "gennodetags",
+            .root_module = tool_module,
+        });
 
         const tool_step = b.addRunArtifact(tool);
         break :blk tool_step.addOutputFileArg("nodetags.zig");

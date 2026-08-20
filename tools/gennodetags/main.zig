@@ -23,21 +23,17 @@ const tagsOnly = std.StaticStringMap(void).initComptime([_]struct { []const u8 }
     .{"T_XidList"},
 });
 
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
 
-    const args = try std.process.argsAlloc(arena);
+    const args = try init.minimal.args.toSlice(arena);
     if (args.len != 2)
         fatal("wrong number of arguments", .{});
 
-    var out = std.fs.cwd().createFile(args[1], .{}) catch |err| {
-        fatal("create file {s}: {}\n", .{ args[1], err });
-    };
-    defer out.close();
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(arena);
 
-    try out.writeAll(
+    try buf.appendSlice(arena,
         \\pub const std = @import("std");
         \\
         \\pub const pg = @import("pgzx_pgsys");
@@ -47,40 +43,36 @@ pub fn main() !void {
 
     // 1. collect all node tags into `node_tags` list using comptime reflection.
     @setEvalBranchQuota(50000);
-    var node_tags = std.ArrayList([]const u8).init(arena);
-    defer node_tags.deinit();
+    var node_tags = std.ArrayList([]const u8).empty;
+    defer node_tags.deinit(arena);
     const pg_mod = @typeInfo(pg).@"struct";
     inline for (pg_mod.decls) |decl| {
         const name = decl.name;
         if (std.mem.startsWith(u8, name, "T_")) {
-            node_tags.append(decl.name) catch |err| {
+            node_tags.append(arena, decl.name) catch |err| {
                 fatal("build node tags list: {}\n", .{err});
             };
         }
     }
 
     // 2. Create `Tag enum` with all known node tags.
-    try out.writeAll("pub const Tag = enum (pg.NodeTag) {\n");
+    try buf.appendSlice(arena, "pub const Tag = enum (pg.NodeTag) {\n");
     for (node_tags.items) |tag| {
-        const name = tag[2..];
-        try out.writer().print("{s} = pg.{s},\n", .{ name, tag });
+        try buf.print(arena, "{s} = pg.{s},\n", .{ tag[2..], tag });
     }
-    try out.writeAll("};\n\n");
+    try buf.appendSlice(arena, "};\n\n");
 
     // 3. Create types -> tags mappings. Only add tags for valid types.
-    try out.writeAll("pub const TypeTagTable = .{\n");
+    try buf.appendSlice(arena, "pub const TypeTagTable = .{\n");
     for (node_tags.items) |tag| {
         if (tagsOnly.has(tag))
             continue;
 
-        const typeName = tag[2..];
-        try out.writeAll(".{");
-        try out.writer().print("pg.{s}, pg.{s}", .{ tag, typeName });
-        try out.writeAll("},\n");
+        try buf.print(arena, ".{{pg.{s}, pg.{s}}},\n", .{ tag, tag[2..] });
     }
-    try out.writeAll("};\n");
+    try buf.appendSlice(arena, "};\n");
 
-    try out.writeAll(
+    try buf.appendSlice(arena,
         \\pub inline fn findTag(comptime T: type) ?Tag {
         \\    inline for (TypeTagTable) |entry| {
         \\        if (entry[1] == T) {
@@ -101,7 +93,12 @@ pub fn main() !void {
         \\}
     );
 
-    return std.process.cleanExit();
+    try std.Io.Dir.cwd().writeFile(init.io, .{
+        .sub_path = args[1],
+        .data = buf.items,
+    });
+
+    return std.process.cleanExit(init.io);
 }
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {

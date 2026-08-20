@@ -289,8 +289,9 @@ pub fn convBinValue(comptime T: type, frame: SPIFrame, row: usize, col: c_int) !
     const desc = table.*.tupdesc;
     nd.value = pg.SPI_getbinval(table.*.vals[row], desc, col, @ptrCast(&nd.isnull));
     try checkStatus(pg.SPI_result);
-    const attr_desc = &desc.*.attrs()[@intCast(col - 1)];
-    const oid = attr_desc.atttypid;
+    // SPI_gettypeid instead of poking TupleDescData.attrs: PG18 moved to
+    // compact attributes and the translated TupleDescAttr helper is broken.
+    const oid = pg.SPI_gettypeid(desc, col);
     return try datum.fromNullableDatumWithOID(T, nd, oid);
 }
 

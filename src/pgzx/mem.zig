@@ -260,7 +260,7 @@ pub const MemoryContextAllocator = struct {
             @compileError("data must be a pointer");
         }
         try self.registerAllocResetCallbackFn(@ptrCast(data), struct {
-            fn wrapper(data_ptr: ?*anyopaque) callconv(.C) void {
+            fn wrapper(data_ptr: ?*anyopaque) callconv(.c) void {
                 f(@ptrCast(@alignCast(data_ptr)));
             }
         }.wrapper);

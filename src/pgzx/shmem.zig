@@ -47,7 +47,7 @@ pub inline fn registerStartupHook(f: anytype) void {
 inline fn registerHook(f: anytype, hook: anytype) void {
     const ctx = struct {
         var prev_hook: @TypeOf(hook.*) = undefined;
-        fn hook_fn() callconv(.C) void {
+        fn hook_fn() callconv(.c) void {
             if (prev_hook) |prev| {
                 prev();
             }

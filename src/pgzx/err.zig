@@ -43,7 +43,7 @@ pub const ElogIndicator = error{
 /// Do not use PG_RE_THROW directly. Use `pg_re_throw` instead to ensure
 /// that the PostgreSQL error handlers find the correct error state and
 /// memory context it would expect.
-pub fn pgRethrow() callconv(.C) void {
+pub fn pgRethrow() callconv(.c) void {
     // Postgres error handling does set the active memory context to the
     // ErrorContext when calling longjmp.
     // Because we did restore the memory context we want to make sure that we

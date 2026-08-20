@@ -10,7 +10,7 @@ std_build: *std.Build,
 paths: Paths,
 options: struct {
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.Mode,
+    optimize: std.builtin.OptimizeMode,
 },
 debug: DebugOptions,
 
@@ -93,10 +93,10 @@ pub const Project = struct {
                 .pgzx = pgbuild.modules.pgzx(),
             },
             .config = proj_config,
-            .options = std.StringArrayHashMapUnmanaged(*Step.Options).init(b.allocator, &.{}, &.{}) catch unreachable,
-            .includePaths = std.ArrayList(LazyPath).init(b.allocator),
-            .libraryPaths = std.ArrayList(LazyPath).init(b.allocator),
-            .cSourcesFiles = std.ArrayList(AddCSourceFilesOptions).init(b.allocator),
+            .options = std.StringArrayHashMapUnmanaged(*Step.Options){},
+            .includePaths = std.ArrayList(LazyPath).empty,
+            .libraryPaths = std.ArrayList(LazyPath).empty,
+            .cSourcesFiles = std.ArrayList(AddCSourceFilesOptions).empty,
         };
     }
 
@@ -141,15 +141,15 @@ pub const Project = struct {
     }
 
     pub fn addIncludePath(proj: *Project, path: LazyPath) void {
-        proj.includePaths.append(path) catch unreachable;
+        proj.includePaths.append(proj.build.allocator, path) catch unreachable;
     }
 
     pub fn addLibraryPath(proj: *Project, path: LazyPath) void {
-        proj.libraryPaths.append(path) catch unreachable;
+        proj.libraryPaths.append(proj.build.allocator, path) catch unreachable;
     }
 
     pub fn addCSourceFiles(proj: *Project, options: AddCSourceFilesOptions) void {
-        proj.cSourcesFiles.append(options) catch unreachable;
+        proj.cSourcesFiles.append(proj.build.allocator, options) catch unreachable;
     }
 };
 
@@ -195,7 +195,7 @@ pub const InstallExtension = struct {
 
         // shared library options
         target: ?std.Build.ResolvedTarget = null,
-        optimize: ?std.builtin.Mode = null,
+        optimize: ?std.builtin.OptimizeMode = null,
         single_threaded: bool = true,
         link_libc: bool = true,
         link_allow_shlib_undefined: bool = true,
@@ -230,75 +230,9 @@ pub const InstallExtension = struct {
     }
 };
 
-pub const RunExec = struct {
-    owner: *Build,
-    argv: std.ArrayList([]const u8),
-    step: Step,
-
-    pub const base_id: Step.Id = .run;
-
-    fn create(b: *Build, name: []const u8, argv: []const []const u8) *RunExec {
-        var r = b.std_build.allocator.create(RunExec) catch @panic("OOM");
-        r.* = .{
-            .owner = b,
-            .argv = std.ArrayList([]const u8).init(b.std_build.allocator),
-            .step = Step.init(.{
-                .id = base_id,
-                .name = name,
-                .owner = b.std_build,
-                .makeFn = make,
-            }),
-        };
-        r.argv.appendSlice(argv) catch @panic("OOM");
-        return r;
-    }
-
-    fn addArg(r: *RunExec, arg: []const u8) void {
-        r.argv.append(arg) catch @panic("OOM");
-    }
-
-    fn addArgOption(r: *RunExec, option: []const u8, arg: []const u8) void {
-        r.addArg(option);
-        r.addArg(arg);
-    }
-
-    fn addArgs(r: *RunExec, args: []const []const u8) void {
-        for (args) |arg| {
-            r.addArg(arg);
-        }
-    }
-
-    fn hasSideEffects(r: RunExec) bool {
-        _ = r;
-        return true;
-    }
-
-    fn make(step: *Step, options: Step.MakeOptions) anyerror!void {
-        _ = options;
-
-        const r: *RunExec = @fieldParentPtr("step", step);
-        const b = r.owner.std_build;
-
-        var child = std.process.Child.init(r.argv.items, b.allocator);
-        child.cwd = b.build_root.path;
-        child.cwd_dir = b.build_root.handle;
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
-        const term = child.spawnAndWait() catch @panic("failed to start process");
-        const exit_code = switch (term) {
-            .Exited => |code| code,
-            else => @panic("process failed"),
-        };
-        if (exit_code != 0) {
-            return step.fail("{s} failed. Exit code: {d}\n", .{ r.step.name, exit_code });
-        }
-    }
-};
-
 pub const InitOptions = struct {
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.Mode,
+    optimize: std.builtin.OptimizeMode,
     debug: DebugOptions = .{},
 };
 
@@ -378,20 +312,25 @@ pub fn addExtensionLib(b: *Build, options: ExtensionLibOptions) *Step.Compile {
     const root_dir = options.root_dir orelse
         b.std_build.pathJoin(&[_][]const u8{ "src/", options.name });
 
-    const lib = b.std_build.addSharedLibrary(.{
+    const lib_module = b.std_build.createModule(.{
+        .root_source_file = b.resolveLazyPath(root_dir, options.root_source_file, "main.zig"),
+        .target = b.options.target,
+        .optimize = b.options.optimize,
+        .link_libc = if (options.link_libc) true else null,
+    });
+    lib_module.addIncludePath(.{
+        .cwd_relative = b.getIncludeServerDir(),
+    });
+
+    const lib = b.std_build.addLibrary(.{
         .name = options.name,
+        .linkage = .dynamic,
         .version = .{
             .major = options.version.major,
             .minor = options.version.minor,
             .patch = 0,
         },
-        .root_source_file = b.resolveLazyPath(root_dir, options.root_source_file, "main.zig"),
-        .target = b.options.target,
-        .optimize = b.options.optimize,
-        .link_libc = options.link_libc,
-    });
-    lib.addIncludePath(.{
-        .cwd_relative = b.getIncludeServerDir(),
+        .root_module = lib_module,
     });
     lib.linker_allow_shlib_undefined = true;
     return lib;
@@ -500,10 +439,10 @@ pub const PGRegressOptions = struct {
     load_extensions: ?[]const []const u8 = null,
 };
 
-pub fn addRegress(b: *Build, options: PGRegressOptions) *RunExec {
+pub fn addRegress(b: *Build, options: PGRegressOptions) *Step.Run {
     const pg_regress_tool = b.getPGRegressPath();
     const root_dir = options.root_dir;
-    var runner = RunExec.create(b, "pg_regress", &[_][]const u8{
+    var runner = b.std_build.addSystemCommand(&[_][]const u8{
         pg_regress_tool,
         "--inputdir",
         root_dir,
@@ -514,33 +453,38 @@ pub fn addRegress(b: *Build, options: PGRegressOptions) *RunExec {
     });
 
     if (options.db_host) |db_host| {
-        runner.addArgs(&[_][]const u8{ "--host", db_host });
+        runner.addArg("--host");
+        runner.addArg(db_host);
     }
     if (options.db_port) |db_port| {
-        runner.addArgs(&[_][]const u8{
-            "--port",
-            std.fmt.allocPrint(b.std_build.allocator, "{d}", .{db_port}) catch @panic("OOM"),
-        });
+        runner.addArg("--port");
+        runner.addArg(std.fmt.allocPrint(b.std_build.allocator, "{d}", .{db_port}) catch @panic("OOM"));
     }
     if (options.db_user) |db_user| {
-        runner.addArgs(&[_][]const u8{ "--user", db_user });
+        runner.addArg("--user");
+        runner.addArg(db_user);
     }
     if (options.db_name) |db_name| {
-        runner.addArgs(&[_][]const u8{ "--dbname", db_name });
+        runner.addArg("--dbname");
+        runner.addArg(db_name);
     }
     if (options.create_role) |create_role| {
-        runner.addArgs(&[_][]const u8{ "--create-role", create_role });
+        runner.addArg("--create-role");
+        runner.addArg(create_role);
     }
     if (options.debug) {
-        runner.addArgs(&[_][]const u8{"--debug"});
+        runner.addArg("--debug");
     }
     if (options.load_extensions) |list| {
         for (list) |ext| {
-            runner.addArgs(&[_][]const u8{ "--load-extension", ext });
+            runner.addArg("--load-extension");
+            runner.addArg(ext);
         }
     }
 
-    runner.addArgs(options.scripts);
+    for (options.scripts) |script| {
+        runner.addArg(script);
+    }
     return runner;
 }
 
@@ -558,7 +502,7 @@ pub const RunTestsOptions = struct {
 ///  DROP FUNCTION IF EXISTS run_tests;
 ///  CREATE FUNCTION run_tests() RETURNS INTEGER AS '\''$libdir/{name}'\'' LANGUAGE C IMMUTABLE;
 ///  SELECT run_tests();
-pub fn addRunTests(b: *Build, options: RunTestsOptions) *RunExec {
+pub fn addRunTests(b: *Build, options: RunTestsOptions) *Step.Run {
     const sql = std.fmt.allocPrint(
         b.std_build.allocator,
         \\ DROP FUNCTION IF EXISTS run_tests;
@@ -568,26 +512,27 @@ pub fn addRunTests(b: *Build, options: RunTestsOptions) *RunExec {
         .{options.name},
     ) catch @panic("OOM");
     const psql_exe = b.getPsqlPath();
-    var runner = RunExec.create(b, "run_tests_psql", &[_][]const u8{
+    var runner = b.std_build.addSystemCommand(&[_][]const u8{
         psql_exe,
         "-c",
         sql,
     });
 
     if (options.db_host) |db_host| {
-        runner.addArgs(&[_][]const u8{ "--host", db_host });
+        runner.addArg("--host");
+        runner.addArg(db_host);
     }
     if (options.db_port) |db_port| {
-        runner.addArgs(&[_][]const u8{
-            "--port",
-            std.fmt.allocPrint(b.std_build.allocator, "{d}", .{db_port}) catch @panic("OOM"),
-        });
+        runner.addArg("--port");
+        runner.addArg(std.fmt.allocPrint(b.std_build.allocator, "{d}", .{db_port}) catch @panic("OOM"));
     }
     if (options.db_user) |db_user| {
-        runner.addArgs(&[_][]const u8{ "--user", db_user });
+        runner.addArg("--user");
+        runner.addArg(db_user);
     }
     if (options.db_name) |db_name| {
-        runner.addArgs(&[_][]const u8{ "--dbname", db_name });
+        runner.addArg("--dbname");
+        runner.addArg(db_name);
     }
     return runner;
 }
@@ -605,37 +550,22 @@ fn getPath(b: *Build, path: *?[]const u8, question: []const u8, relative: bool) 
 
 fn makeRelPath(b: *Build, path: []const u8) []const u8 {
     const cwd = b.getPGHome();
-    return std.fs.path.relative(b.std_build.allocator, cwd, path) catch @panic("failed to make relative path");
+    return std.fs.path.relative(b.std_build.allocator, ".", null, cwd, path) catch @panic("failed to make relative path");
 }
 
 pub fn runPGConfig(b: *Build, question: []const u8) []const u8 {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-
     const argv = [_][]const u8{
-        findPGConfig(),
+        findPGConfig(b),
         question,
     };
 
     if (b.debug.pg_config) {
-        std.debug.print("Running pg_config: {s}\n", .{argv});
+        std.debug.print("Running pg_config: {s} {s}\n", .{ argv[0], argv[1] });
     }
 
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    var stdout = std.ArrayListUnmanaged(u8).initCapacity(allocator, 1024) catch @panic("OOM");
-    var stderr = std.ArrayListUnmanaged(u8).initCapacity(allocator, 1024) catch @panic("OOM");
-
-    child.spawn() catch @panic("failed to start pg_config");
-    child.collectOutput(allocator, &stdout, &stderr, 10 * 1024) catch @panic("error while reading from pg_config");
-    const term = child.wait() catch @panic("awaiting pg_config exit");
-    if (!check_exec(term)) {
-        @panic("pg_config failed");
-    }
-
-    const path = trimWhitespace(stdout.items);
+    // Build.run spawns the child and fails the build with a readable
+    // message if pg_config is missing or exits non-zero.
+    const path = trimWhitespace(b.std_build.run(&argv));
     if (path.len == 0) {
         @panic("pg_config failed");
     }
@@ -643,9 +573,7 @@ pub fn runPGConfig(b: *Build, question: []const u8) []const u8 {
     if (b.debug.pg_config) {
         std.debug.print("pg_config returned: {s}\n", .{path});
     }
-
-    // Copy the result onto the builders allocator
-    return b.std_build.dupe(path);
+    return path;
 }
 
 pub fn getPGHome(b: *Build) []const u8 {
@@ -656,19 +584,12 @@ pub fn getPGHome(b: *Build) []const u8 {
     return b.paths.pg_home.?;
 }
 
-fn findPGConfig() []const u8 {
-    return getenvOr("PG_CONFIG", "pg_config");
+fn findPGConfig(b: *Build) []const u8 {
+    return getenvOr(b, "PG_CONFIG", "pg_config");
 }
 
-fn getenvOr(name: []const u8, default: []const u8) []const u8 {
-    return std.posix.getenv(name) orelse default;
-}
-
-fn check_exec(term: anytype) bool {
-    return switch (term) {
-        .Exited => |code| code == 0,
-        else => false,
-    };
+fn getenvOr(b: *Build, name: []const u8, default: []const u8) []const u8 {
+    return b.std_build.graph.environ_map.get(name) orelse default;
 }
 
 fn trimWhitespace(s: []const u8) []const u8 {
