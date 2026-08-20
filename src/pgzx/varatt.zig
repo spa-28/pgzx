@@ -75,9 +75,9 @@ pub inline fn VARATT_NOT_PAD_BYTE(PTR: anytype) @TypeOf(@import("std").zig.c_tra
     return @import("std").zig.c_translation.cast([*c]pg.uint8, PTR).* != @as(c_int, 0);
 }
 
-pub inline fn VARSIZE_4B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @import("std").zig.c_translation.promoteIntLiteral(pg.uint32, 0x3FFFFFFF, .hex)) {
+pub inline fn VARSIZE_4B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF)) {
     _ = &PTR;
-    return (@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @import("std").zig.c_translation.promoteIntLiteral(pg.uint32, 0x3FFFFFFF, .hex);
+    return (@import("std").zig.c_translation.cast([*c]varattrib_4b, PTR).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF);
 }
 
 pub inline fn VARSIZE_1B(PTR: anytype) @TypeOf((@import("std").zig.c_translation.cast([*c]varattrib_1b, PTR).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F)) {

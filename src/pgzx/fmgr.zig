@@ -17,15 +17,31 @@ pub const FN_INFO_V1 = [*c]const Pg_finfo_record;
 
 /// Use PG_MAGIC value to indicate to PostgreSQL that we have a loadable module.
 /// This value must be returned by a function named `Pg_magic_func`.
-pub const PG_MAGIC = Pg_magic_struct{
-    .len = @bitCast(@as(c_uint, @truncate(@sizeOf(Pg_magic_struct)))),
-    .version = @divTrunc(pg.PG_VERSION_NUM, @as(c_int, 100)),
-    .funcmaxargs = pg.FUNC_MAX_ARGS,
-    .indexmaxkeys = pg.INDEX_MAX_KEYS,
-    .namedatalen = pg.NAMEDATALEN,
-    .float8byval = pg.FLOAT8PASSBYVAL,
-    .abi_extra = [32]u8{ 'P', 'o', 's', 't', 'g', 'r', 'e', 'S', 'Q', 'L', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-};
+pub const PG_MAGIC = if (pg.PG_VERSION_NUM >= 180000)
+    // PG18 nests the ABI fields in a `Pg_abi_values abi_fields` struct
+    // (name/version for PG_MODULE_MAGIC_EXT come after it; NULL here).
+    Pg_magic_struct{
+        .len = @bitCast(@as(c_uint, @truncate(@sizeOf(Pg_magic_struct)))),
+        .abi_fields = .{
+            .version = @divTrunc(pg.PG_VERSION_NUM, @as(c_int, 100)),
+            .funcmaxargs = pg.FUNC_MAX_ARGS,
+            .indexmaxkeys = pg.INDEX_MAX_KEYS,
+            .namedatalen = pg.NAMEDATALEN,
+            .float8byval = pg.FLOAT8PASSBYVAL,
+            .abi_extra = [32]u8{ 'P', 'o', 's', 't', 'g', 'r', 'e', 'S', 'Q', 'L', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        },
+    }
+else
+    // PG15-17: same ABI fields, flat in the struct.
+    Pg_magic_struct{
+        .len = @bitCast(@as(c_uint, @truncate(@sizeOf(Pg_magic_struct)))),
+        .version = @divTrunc(pg.PG_VERSION_NUM, @as(c_int, 100)),
+        .funcmaxargs = pg.FUNC_MAX_ARGS,
+        .indexmaxkeys = pg.INDEX_MAX_KEYS,
+        .namedatalen = pg.NAMEDATALEN,
+        .float8byval = pg.FLOAT8PASSBYVAL,
+        .abi_extra = [32]u8{ 'P', 'o', 's', 't', 'g', 'r', 'e', 'S', 'Q', 'L', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    };
 
 /// Postgres magic indicator that a function uses the v1 UDF API.
 pub const PG_FINFO_V1_RECORD = Pg_finfo_record{
