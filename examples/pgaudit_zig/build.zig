@@ -5,7 +5,7 @@ const std = @import("std");
 const PGBuild = @import("pgzx").Build;
 
 pub fn build(b: *std.Build) void {
-    const NAME = "pg_audit_zig";
+    const NAME = "pgaudit_zig";
     const VERSION = PGBuild.ExtensionVersion{ .major = 0, .minor = 1 };
 
     const DB_TEST_USER = "postgres";

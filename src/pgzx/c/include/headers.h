@@ -109,6 +109,9 @@
 #include "nodes/execnodes.h"
 #include "nodes/extensible.h"
 #include "nodes/lockoptions.h"
+#if PG_VERSION_NUM >= 160000
+#include "nodes/miscnodes.h"
+#endif
 #include "nodes/makefuncs.h"
 #include "nodes/memnodes.h"
 #include "nodes/nodeFuncs.h"

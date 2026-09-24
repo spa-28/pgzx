@@ -35,11 +35,31 @@ pub inline fn pointerElemType(comptime T: type) type {
 }
 
 pub inline fn hasSentinal(comptime T: type) bool {
-    return isSlice(T) and @typeInfo(T).pointer.sentinel() != null;
+    return switch (@typeInfo(T)) {
+        .pointer => |p| switch (p.size) {
+            .slice => p.sentinel() != null,
+            .one => switch (@typeInfo(p.child)) {
+                .array => |a| a.sentinel() != null,
+                else => false,
+            },
+            else => false,
+        },
+        else => false,
+    };
 }
 
 pub inline fn isStringLike(comptime T: type) bool {
-    return isSlice(T) and sliceElemType(T) == u8;
+    return switch (@typeInfo(T)) {
+        .pointer => |p| switch (p.size) {
+            .slice => p.child == u8,
+            .one => switch (@typeInfo(p.child)) {
+                .array => |a| a.child == u8,
+                else => false,
+            },
+            else => false,
+        },
+        else => false,
+    };
 }
 
 pub inline fn isStringLikeZ(comptime T: type) bool {
@@ -112,18 +132,21 @@ pub const TestSuite_Meta = struct {
         try std.testing.expect(!hasSentinal(u8));
         try std.testing.expect(!hasSentinal([]u8));
         try std.testing.expect(hasSentinal([:0]u8));
+        try std.testing.expect(hasSentinal(@TypeOf("zig")));
     }
 
     pub fn testIsStringLike() !void {
         try std.testing.expect(!isStringLike(u8));
         try std.testing.expect(isStringLike([]u8));
         try std.testing.expect(isStringLike([:0]u8));
+        try std.testing.expect(isStringLike(@TypeOf("zig")));
     }
 
     pub fn testIsStringLikeZ() !void {
         try std.testing.expect(!isStringLikeZ(u8));
         try std.testing.expect(!isStringLikeZ([]u8));
         try std.testing.expect(isStringLikeZ([:0]u8));
+        try std.testing.expect(isStringLikeZ(@TypeOf("zig")));
     }
 
     pub fn testIsPrimitive() !void {

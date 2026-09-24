@@ -46,7 +46,7 @@ pub fn SList(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type 
         }
 
         pub inline fn isEmpty(self: Self) bool {
-            return pg.slist_is_empty(&self.head);
+            return pg.slist_is_empty(@constCast(&self.head));
         }
 
         pub inline fn pushHead(self: *Self, v: *T) void {

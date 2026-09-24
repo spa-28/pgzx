@@ -12,9 +12,31 @@ on:
       - main
 
 jobs:
-  check_project:
-    name: Check
+  precommit:
+    name: Commit checks
     runs-on: ubuntu-22.04
+    outputs:
+      postgres-versions: ${{ steps.postgres.outputs.versions }}
+    steps:
+      - name: git checkout
+        uses: actions/checkout@v4
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Read supported PostgreSQL versions
+        id: postgres
+        run: echo "versions=$(nix eval --json .#lib.postgres.versions)" >> "$GITHUB_OUTPUT"
+      - name: Run commit checks
+        run: nix develop --command -- pre-commit run --all-files --color always
+
+  runtime:
+    name: PostgreSQL ${{ matrix.postgres }}
+    needs: precommit
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ${{ fromJSON(needs.precommit.outputs.postgres-versions) }}
     steps:
       - name: git checkout
         uses: actions/checkout@v4
@@ -22,15 +44,10 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Init Nix environment
-        run:
-          nix develop --command -- echo "Done"
-      - name: Run Commit checks
-        run: |
-          nix develop --command -- pre-commit run --all-files --color always
-      - name: Create local postgres installation
+        run: nix develop ".#pg${{ matrix.postgres }}" --command -- true
+      - name: Create local PostgreSQL installation
         run: |
           sudo chown "$USER" /run/postgresql
-          nix develop --command -- ./ci/setup.sh
+          nix develop ".#pg${{ matrix.postgres }}" --command -- ./ci/setup.sh
       - name: Build and run tests
-        run: |
-          nix develop --command -- ./ci/run.sh
+        run: nix develop ".#pg${{ matrix.postgres }}" --command -- ./ci/run.sh

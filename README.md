@@ -30,7 +30,7 @@ The following sample extensions (ordered from simple to complex) show how to use
 |--------------------------------------------|-------------|
 | [char_count_zig](examples/char_count_zig/) | Adds a function that counts how many times a particular character shows up in a string. Shows how to register a function and how to interpret the parameters. |
 | [pghostname_zig](examples/pghostname_zig/) | Adds a function that returns the database server's host name. |
-| [pg_audit_zig](examples/pgaudit_zig/)      | Inspired by the pgaudit C extension, this one registers callbacks to multiple hooks and uses more advanced error handling and memory allocation patterns. |
+| [pgaudit_zig](examples/pgaudit_zig/)       | Inspired by the pgaudit C extension, this one registers callbacks to multiple hooks and uses more advanced error handling and memory allocation patterns. |
 
 ## Docs
 
@@ -193,9 +193,11 @@ pgzx is currently under heavy development by the [Xata](https://xata.io) team. I
 * Utilities
   * [ ] Postgres versions (compile and test)
     * [ ] Postgres 14
-    * [ ] Postgres 15
-    * [ ] Postgres 16
+    * [x] Postgres 15
+    * [x] Postgres 16
     * [x] Postgres 17
+    * [x] Postgres 18
+    * CI runs the full test suite on Postgres 15–18; the default Nix development shell uses Postgres 18.
   * [x] Logging
   * [x] Error handling
   * [x] Memory context allocators
@@ -249,11 +251,17 @@ If you want to try out the project without having to install Nix on your
 system, you can do so using Docker. You can build the docker image by running
 the `dev/docker/build.sh` script. The docker image is named `pgzx:latest`.
 
-To enter the develpment shell run:
+The default development shell uses Postgres 18. You can also select any supported version explicitly:
 
+```sh
+$ nix develop          # Postgres 18
+$ nix develop .#pg15
+$ nix develop .#pg16
+$ nix develop .#pg17
+$ nix develop .#pg18
 ```
-$ nix develop
-```
+
+Each shell relocates its selected version into `out/<major>` when you run `pglocal`; `pguse <major>` switches `out/default` between already-relocated installations.
 
 If you want to use docker instead, run:
 
@@ -276,7 +284,7 @@ $ pglocal
 ...
 
 $ ls out
-16  default
+18  default
 ```
 
 The `out/default` folder is a symlink to the postgres installation currently in use.
@@ -292,14 +300,12 @@ This creates a local database named `postgres`. The script allows us to configur
 
 We can start and stop the database using `pgstart` and `pgstop`. Let's test our current setup:
 
-```
+```sh
 $ pgstart
-$ psql  -U postgres -c 'select version()'
-                                         version
------------------------------------------------------------------------------------------
- PostgreSQL 16.1 on aarch64-apple-darwin22.6.0, compiled by clang version 16.0.6, 64-bit
-(1 row)
+$ psql -U postgres -c 'select version()'
 ```
+
+The result should report the PostgreSQL version selected by the active Nix shell.
 
 This project has a few example extensions. We will install and test the `char_count_zig` extension next:
 
@@ -409,27 +415,25 @@ $ pguse local
 
 ```
 
-Note: Delete the `zig-cache` folder when switching to another Postgres installation to ensure that you extension is rebuilt properly against the new version.
+Note: Delete the `.zig-cache` folder when switching to another Postgres installation to ensure that your extension is rebuilt properly against the new version.
 
 
 ### Debugging Zig standard library and build script support
 
-To debug Zig build scripts or the standard library all you need is the original sources. No additional build step is required. Anyways, it is recommended to use the same library version as the zig compiler ships with. You can query the current version or Git commit of a nightly build using the `zig` tool:
+To debug Zig build scripts or the standard library all you need is the original sources. No additional build step is required. Use the same source version as the compiler selected by the development shell:
 
 ```
 $ zig version
-0.13.0-dev.28+3c5e84073
+0.16.0
 ```
 
-The version shown here for example indicates that we use a nightly build. The commit ID of that build is `0b744da84`.
-
-You can clone and checkout the repository by yourself. We also have a small script `ziglocal` to checkout and even build the compiler. You can use the script to just checkout the correct version into your development environment:
+You can clone and checkout the matching release with the `ziglocal` helper:
 
 ```
-$ ziglocal clone --commit 0b744da84
+$ ziglocal clone --branch 0.16.0
 ```
 
-This command clones the master branch only into the `./out/zig` directory.
+This command clones the `0.16.0` release into the `./out/zig` directory.
 
 Now when building the test extensions you can use the `--zig-lib-dir` CLI flag to tell the compiler to use an alternative library:
 
@@ -450,17 +454,17 @@ The `debug` shell installs the additional dependencies that you need to build Po
 nix develop '.#debug'
 ```
 
-Optionally we might want to debug the actual version that we normally use:
+To debug the exact version used by the project, first confirm the pinned release:
 
 ```
 $ zig version
-0.12.0-dev.3154+0b744da84
+0.16.0
 ```
 
-Next we checkout and compile the toolchain (Note: the `--commit` option is optional):
+Then checkout and compile that release:
 
 ```
-$ ziglocal --commit 0b744da84
+$ ziglocal --branch 0.16.0
 ```
 
 This step will take a while. You will find the compiler and library of your local debug build in the `out/zig/build/stage3` directory.
@@ -469,15 +473,11 @@ This step will take a while. You will find the compiler and library of your loca
 
 ### Which Zig version do you support?
 
-The Zig toolchain, including the compiler, build system, and standard library, is still in development and breaking changes do happen every now and then. For this reason this project follows the [Zig master branch](https://github.com/ziglang/zig).
+The project supports Zig 0.16.0. The compiler, build system, and standard library evolve together, so using another Zig version is likely to fail.
 
-The Nix based development shell uses [zig-overlay](https://github.com/mitchellh/zig-overlay) in conjunction with the `flake.lock` file to pin the zig toolchain version to a recent commit ID.
+The Nix development shell obtains Zig 0.16.0 from [zig-overlay](https://github.com/mitchellh/zig-overlay), with the exact overlay revision recorded in `flake.lock`. We recommend using the project development shell when building or testing the examples.
 
-The dependency is updated by us every so often and we try to test and fix breaking changes when updating the toolchain version. We highly recommend to use the projects develoment shell when testing the example extensions provided, otherwise you might have problems compiling the extensions at all.
-
-We understand not everyone is keen to install Nix locally. For getting to know the environment you can build and run a development shell in a local docker container. Use `./dev/docker/build.sh` to build the container and `./dev/docker/run.sh` to start the dockerized development shell.
-
-The current stable release is verion 0.12. As the build system APIs and package management system are undergoing heavy development recently we chose to stick with the `master` branch for now.
+If you do not want to install Nix locally, build and run the provided development container with `./dev/docker/build.sh` and `./dev/docker/run.sh`.
 
 
 ### Where is my extension installed?

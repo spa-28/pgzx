@@ -1,6 +1,8 @@
 {
   pkgs,
   lib,
+  postgresql,
+  postgresVersion,
   ...
 }: let
   menu = ''
@@ -48,7 +50,7 @@ in {
       pkgs.shellcheck
       pkgs.shfmt
 
-      pkgs.postgresql_16_jit
+      postgresql
       pkgs.openssl
       pkgs.gss
       pkgs.krb5
@@ -63,7 +65,9 @@ in {
   shellHook = ''
     export PRJ_ROOT=$PWD
     export PG_HOME=$PRJ_ROOT/out/default
-    export PATH="$PG_HOME/lib/postgresql/pgxs/src/test/regress:$PATH"
+    export PGZX_POSTGRES_VERSION=${postgresVersion}
+    export PGZX_SOURCE_PG_CONFIG=${postgresql}/bin/pg_config
+    export PATH="$PG_HOME/lib/pgxs/src/test/regress:$PATH"
     export PATH="$PG_HOME/bin:$PRJ_ROOT/dev/bin:$PATH"
 
     # Nix postgres is patched to find and install libraries into another directory

@@ -17,6 +17,9 @@ const tagsOnly = std.StaticStringMap(void).initComptime([_]struct { []const u8 }
     .{"T_WindowObjectData"},
     .{"T_BumpContext"},
 
+    // PG15 ABI-only tag; the corresponding struct was removed before release.
+    .{"T_PathKeyInfo"},
+
     // List types (only tags, all use the `List` type)
     .{"T_IntList"},
     .{"T_OidList"},
