@@ -11,6 +11,8 @@ comptime {
     pgzx.PG_MODULE_MAGIC();
     pgzx.PG_FUNCTION_V1("pgzx_test_fmgr_mixed", fmgr_tests.mixed);
     pgzx.PG_FUNCTION_V1("pgzx_test_fmgr_required", fmgr_tests.required);
+    pgzx.PG_FUNCTION_V1("pgzx_test_fmgr_char_round_trip", fmgr_tests.charRoundTrip);
+    pgzx.PG_FUNCTION_V1("pgzx_test_fmgr_name_round_trip", fmgr_tests.nameRoundTrip);
 
     pgzx.testing.registerTests(
         @import("build_options").testfn,

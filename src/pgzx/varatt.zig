@@ -2,7 +2,10 @@
 //! compile correctly.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const pg = @import("pgzx_pgsys");
+
+const native_endian = builtin.cpu.arch.endian();
 
 // WARNING:
 // Taken from translated C code and mostly untested.
@@ -25,22 +28,34 @@ pub const VARTAG_ONDISK = pg.VARTAG_ONDISK;
 
 pub inline fn SET_VARSIZE_4B(PTR: anytype, len: anytype) void {
     const ptr: [*c]varattrib_4b = @ptrCast(@alignCast(PTR));
-    ptr.*.va_4byte.va_header = @as(pg.uint32, @intCast(len)) << 2;
+    const value: pg.uint32 = @intCast(len);
+    ptr.*.va_4byte.va_header = if (native_endian == .big)
+        value & 0x3FFFFFFF
+    else
+        value << 2;
 }
 
 pub inline fn SET_VARSIZE_1B(PTR: anytype, len: anytype) void {
     const ptr: [*c]varattrib_1b = @ptrCast(@alignCast(PTR));
-    ptr.*.va_header = (@as(pg.uint8, @intCast(len)) << 1) | 0x01;
+    const value: pg.uint8 = @intCast(len);
+    ptr.*.va_header = if (native_endian == .big)
+        value | 0x80
+    else
+        (value << 1) | 0x01;
 }
 
 pub inline fn SET_VARSIZE_4B_C(PTR: anytype, len: anytype) void {
     const ptr: [*c]varattrib_4b = @ptrCast(@alignCast(PTR));
-    ptr.*.va_compressed.va_header = (@as(pg.uint32, @intCast(len)) << 2) | 0x02;
+    const value: pg.uint32 = @intCast(len);
+    ptr.*.va_compressed.va_header = if (native_endian == .big)
+        (value & 0x3FFFFFFF) | 0x40000000
+    else
+        (value << 2) | 0x02;
 }
 
 pub inline fn SET_VARTAG_1B_E(PTR: anytype, tag: anytype) void {
     const ptr: [*c]varattrib_1b_e = @ptrCast(@alignCast(PTR));
-    ptr.*.va_header = 0x01;
+    ptr.*.va_header = if (native_endian == .big) 0x80 else 0x01;
     ptr.*.va_tag = @intCast(tag);
 }
 
@@ -71,37 +86,61 @@ pub inline fn VARTAG_SIZE(tag: anytype) usize {
         0;
 }
 
-pub inline fn VARATT_IS_4B(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x00)) {
-    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x00);
+pub inline fn VARATT_IS_4B(PTR: anytype) bool {
+    const header = @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header;
+    return if (native_endian == .big)
+        (header & 0x80) == 0x00
+    else
+        (header & 0x01) == 0x00;
 }
 
-pub inline fn VARATT_IS_4B_U(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x00)) {
-    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x00);
+pub inline fn VARATT_IS_4B_U(PTR: anytype) bool {
+    const header = @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header;
+    return if (native_endian == .big)
+        (header & 0xC0) == 0x00
+    else
+        (header & 0x03) == 0x00;
 }
 
-pub inline fn VARATT_IS_4B_C(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x02)) {
-    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x03)) == @as(c_int, 0x02);
+pub inline fn VARATT_IS_4B_C(PTR: anytype) bool {
+    const header = @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header;
+    return if (native_endian == .big)
+        (header & 0xC0) == 0x40
+    else
+        (header & 0x03) == 0x02;
 }
 
-pub inline fn VARATT_IS_1B(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x01)) {
-    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header & @as(c_int, 0x01)) == @as(c_int, 0x01);
+pub inline fn VARATT_IS_1B(PTR: anytype) bool {
+    const header = @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header;
+    return if (native_endian == .big)
+        (header & 0x80) == 0x80
+    else
+        (header & 0x01) == 0x01;
 }
 
-pub inline fn VARATT_IS_1B_E(PTR: anytype) @TypeOf(@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header == @as(c_int, 0x01)) {
-    return @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header == @as(c_int, 0x01);
+pub inline fn VARATT_IS_1B_E(PTR: anytype) bool {
+    const header = @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header;
+    return header == if (native_endian == .big) 0x80 else 0x01;
 }
 
 pub inline fn VARATT_NOT_PAD_BYTE(PTR: anytype) @TypeOf(@as([*c]pg.uint8, @ptrCast(@alignCast(PTR))).* != @as(c_int, 0)) {
     return @as([*c]pg.uint8, @ptrCast(@alignCast(PTR))).* != @as(c_int, 0);
 }
 
-pub inline fn VARSIZE_4B(PTR: anytype) @TypeOf((@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF)) {
-    _ = &PTR;
-    return (@as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_header >> @as(pg.uint32, 2)) & @as(pg.uint32, 0x3FFFFFFF);
+pub inline fn VARSIZE_4B(PTR: anytype) pg.uint32 {
+    const header = @as([*c]varattrib_4b, @ptrCast(@alignCast(PTR))).*.va_4byte.va_header;
+    return if (native_endian == .big)
+        header & 0x3FFFFFFF
+    else
+        (header >> 2) & 0x3FFFFFFF;
 }
 
-pub inline fn VARSIZE_1B(PTR: anytype) @TypeOf((@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F)) {
-    return (@as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header >> @as(pg.uint32, 1)) & @as(pg.uint32, 0x7F);
+pub inline fn VARSIZE_1B(PTR: anytype) pg.uint32 {
+    const header: pg.uint32 = @as([*c]varattrib_1b, @ptrCast(@alignCast(PTR))).*.va_header;
+    return if (native_endian == .big)
+        header & 0x7F
+    else
+        (header >> 1) & 0x7F;
 }
 
 pub inline fn VARTAG_1B_E(PTR: anytype) @TypeOf(@as([*c]varattrib_1b_e, @ptrCast(@alignCast(PTR))).*.va_tag) {
@@ -262,6 +301,11 @@ pub const TestSuite_Varatt = struct {
         SET_VARSIZE_4B(&buffer, buffer.len);
         std.mem.copyForwards(u8, VARDATA_4B(&buffer)[0..3], "zig");
 
+        const header = @as([*c]varattrib_4b, @ptrCast(&buffer)).*.va_4byte.va_header;
+        try std.testing.expectEqual(
+            if (native_endian == .big) @as(pg.uint32, buffer.len) else @as(pg.uint32, buffer.len) << 2,
+            header,
+        );
         try std.testing.expect(VARATT_IS_4B(&buffer));
         try std.testing.expect(VARATT_IS_4B_U(&buffer));
         try std.testing.expect(!VARATT_IS_4B_C(&buffer));
@@ -276,6 +320,10 @@ pub const TestSuite_Varatt = struct {
         SET_VARSIZE_1B(&buffer, buffer.len);
         std.mem.copyForwards(u8, VARDATA_1B(&buffer)[0..3], "zig");
 
+        try std.testing.expectEqual(
+            if (native_endian == .big) @as(u8, buffer.len) | 0x80 else @as(u8, buffer.len) << 1 | 0x01,
+            buffer[0],
+        );
         try std.testing.expect(VARATT_IS_1B(&buffer));
         try std.testing.expect(!VARATT_IS_1B_E(&buffer));
         try std.testing.expect(VARATT_IS_SHORT(&buffer));
@@ -292,6 +340,14 @@ pub const TestSuite_Varatt = struct {
         SET_VARSIZE_4B_C(&buffer, buffer.len);
         std.mem.copyForwards(u8, VARDATA_4B_C(&buffer)[0..3], "zig");
 
+        const header = @as([*c]varattrib_4b, @ptrCast(&buffer)).*.va_compressed.va_header;
+        try std.testing.expectEqual(
+            if (native_endian == .big)
+                @as(pg.uint32, buffer.len) | 0x40000000
+            else
+                @as(pg.uint32, buffer.len) << 2 | 0x02,
+            header,
+        );
         try std.testing.expect(VARATT_IS_4B(&buffer));
         try std.testing.expect(VARATT_IS_COMPRESSED(&buffer));
         try std.testing.expectEqual(@as(pg.uint32, buffer.len), VARSIZE_4B(&buffer));
@@ -303,6 +359,7 @@ pub const TestSuite_Varatt = struct {
         @memset(&buffer, 0);
         SET_VARTAG_1B_E(&buffer, VARTAG_INDIRECT);
 
+        try std.testing.expectEqual(if (native_endian == .big) @as(u8, 0x80) else 0x01, buffer[0]);
         try std.testing.expect(VARATT_IS_1B(&buffer));
         try std.testing.expect(VARATT_IS_EXTERNAL(&buffer));
         try std.testing.expect(VARATT_IS_EXTERNAL_INDIRECT(&buffer));

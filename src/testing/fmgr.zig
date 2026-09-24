@@ -11,3 +11,11 @@ pub fn mixed(fcinfo: pg.FunctionCallInfo, value: i32, enabled: bool, label: ?[:0
 pub fn required(value: i32) i32 {
     return value;
 }
+
+pub fn charRoundTrip(value: [:0]const u8) [:0]const u8 {
+    return value;
+}
+
+pub fn nameRoundTrip(value: [:0]const u8) [:0]const u8 {
+    return value;
+}

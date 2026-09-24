@@ -95,38 +95,55 @@ pub const TestSuite_Guc = struct {
     }
 
     pub fn testBoolVariable() !void {
-        set(bool_name, "off");
-        defer set(bool_name, "off");
+        const original = bool_variable.value;
+        {
+            const level = pg.NewGUCNestLevel();
+            defer pg.AtEOXact_GUC(false, level);
 
-        try std.testing.expect(!bool_variable.value);
-        set(bool_name, "on");
-        try std.testing.expect(bool_variable.value);
+            set(bool_name, "off");
+            try std.testing.expect(!bool_variable.value);
+            set(bool_name, "on");
+            try std.testing.expect(bool_variable.value);
+        }
+        try std.testing.expectEqual(original, bool_variable.value);
     }
 
     pub fn testIntVariable() !void {
-        set(int_name, "42");
-        defer set(int_name, "42");
+        const original = int_variable.value;
+        {
+            const level = pg.NewGUCNestLevel();
+            defer pg.AtEOXact_GUC(false, level);
 
-        try std.testing.expectEqual(@as(c_int, 42), int_variable.value);
-        set(int_name, "-10");
-        try std.testing.expectEqual(@as(c_int, -10), int_variable.value);
-        set(int_name, "100");
-        try std.testing.expectEqual(@as(c_int, 100), int_variable.value);
+            set(int_name, "42");
+            try std.testing.expectEqual(@as(c_int, 42), int_variable.value);
+            set(int_name, "-10");
+            try std.testing.expectEqual(@as(c_int, -10), int_variable.value);
+            set(int_name, "100");
+            try std.testing.expectEqual(@as(c_int, 100), int_variable.value);
+        }
+        try std.testing.expectEqual(original, int_variable.value);
     }
 
     pub fn testStringHooks() !void {
-        set(string_name, "initial");
-        defer set(string_name, "initial");
+        const original = try pgzx.mem.PGCurrentContextAllocator.dupe(u8, string_variable.value());
+        const original_state = string_state;
+        {
+            const level = pg.NewGUCNestLevel();
+            defer pg.AtEOXact_GUC(false, level);
 
-        try std.testing.expectEqualStrings("initial", string_variable.value());
-        try std.testing.expectEqual(StringState.initial, string_state);
+            set(string_name, "initial");
+            try std.testing.expectEqualStrings("initial", string_variable.value());
+            try std.testing.expectEqual(StringState.initial, string_state);
 
-        set(string_name, "next");
-        try std.testing.expectEqualStrings("next", string_variable.value());
-        try std.testing.expectEqual(StringState.next, string_state);
-        try std.testing.expectEqualStrings(
-            "shown-next",
-            std.mem.span(pg.GetConfigOptionByName(string_name.ptr, null, false)),
-        );
+            set(string_name, "next");
+            try std.testing.expectEqualStrings("next", string_variable.value());
+            try std.testing.expectEqual(StringState.next, string_state);
+            try std.testing.expectEqualStrings(
+                "shown-next",
+                std.mem.span(pg.GetConfigOptionByName(string_name.ptr, null, false)),
+            );
+        }
+        try std.testing.expectEqualStrings(original, string_variable.value());
+        try std.testing.expectEqual(original_state, string_state);
     }
 };

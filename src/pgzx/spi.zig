@@ -166,10 +166,11 @@ pub fn OwnedSPIFrameRows(comptime R: type) type {
             return self.rows.next();
         }
 
-        pub const scan = if (@hasDecl(R, "scan"))
-            R.scan
-        else
-            @compileError("no scan method available");
+        pub fn scan(self: *Self, values: anytype) !void {
+            if (comptime !@hasDecl(R, "scan"))
+                @compileError("no scan method available");
+            return self.rows.scan(values);
+        }
     };
 }
 
@@ -275,17 +276,15 @@ const SPIFrame = struct {
 };
 
 pub fn convProcessed(comptime T: type, row: c_int, col: c_int) !T {
-    if (row < 0 or @as(u64, @intCast(row)) >= pg.SPI_processed) {
-        return err.PGError.SPIInvalidRowIndex;
-    }
+    if (row < 0) return err.PGError.SPIInvalidRowIndex;
     return convBinValue(T, SPIFrame.get(), @intCast(row), col);
 }
 
 pub fn convBinValue(comptime T: type, frame: SPIFrame, row: usize, col: c_int) !T {
-    // TODO: check index?
+    const table = frame.tuptable orelse return err.PGError.SPIInvalidRowIndex;
+    if (row >= frame.processed) return err.PGError.SPIInvalidRowIndex;
 
     var nd: pg.NullableDatum = undefined;
-    const table = frame.tuptable.?;
     const desc = table.*.tupdesc;
     nd.value = pg.SPI_getbinval(table.*.vals[row], desc, col, @ptrCast(&nd.isnull));
     try checkStatus(pg.SPI_result);
@@ -404,6 +403,17 @@ pub const TestSuite_SPI = struct {
         try std.testing.expectEqual(@as(?i32, null), try rows.next());
     }
 
+    pub fn testProcessedWithoutTupleTable() !void {
+        try connect();
+        defer finish();
+
+        _ = try exec("CREATE TEMP TABLE pgzx_spi_no_return (value integer) ON COMMIT DROP", .{});
+        _ = try exec("INSERT INTO pgzx_spi_no_return VALUES (1)", .{});
+        try std.testing.expectEqual(@as(u64, 1), pg.SPI_processed);
+        try std.testing.expect(pg.SPI_tuptable == null);
+        try std.testing.expectError(err.PGError.SPIInvalidRowIndex, convProcessed(i32, 0, 1));
+    }
+
     pub fn testNestedFramesPreserveParentRows() !void {
         try connect();
         defer finish();
@@ -433,6 +443,17 @@ pub const TestSuite_SPI = struct {
 
             try std.testing.expectEqual(@as(?i32, 9), try rows.next());
             try std.testing.expectEqual(@as(?i32, null), try rows.next());
+        }
+
+        {
+            try connect();
+            var rows = (try query("SELECT 10::int4", .{})).ownedSPIFrame();
+            defer rows.deinit();
+
+            var value: i32 = undefined;
+            try std.testing.expect(rows.next());
+            try rows.scan(.{&value});
+            try std.testing.expectEqual(@as(i32, 10), value);
         }
 
         try std.testing.expectError(err.PGError.SPIUnconnected, exec("SELECT 1", .{}));
