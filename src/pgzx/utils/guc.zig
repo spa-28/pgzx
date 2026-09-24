@@ -99,6 +99,9 @@ pub const CustomStringVariable = struct {
         initial_value: ?[:0]const u8 = null,
         context: pg.GucContext = pg.PGC_USERSET,
         flags: c_int = 0,
+        check_hook: pg.GucStringCheckHook = null,
+        assign_hook: pg.GucStringAssignHook = null,
+        show_hook: pg.GucShowHook = null,
     };
 
     pub fn register(self: *CustomStringVariable, options: Options) void {
@@ -116,9 +119,9 @@ pub const CustomStringVariable = struct {
             initial_value,
             options.context,
             options.flags,
-            null,
-            null,
-            null,
+            options.check_hook,
+            options.assign_hook,
+            options.show_hook,
         );
     }
 

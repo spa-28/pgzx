@@ -1,0 +1,133 @@
+LOAD '$libdir/pgzx_unit';
+SELECT current_setting('pgzx_test.bool') AS bool_default;
+ bool_default 
+--------------
+ off
+(1 row)
+
+SET pgzx_test.bool = on;
+SELECT current_setting('pgzx_test.bool') AS bool_set;
+ bool_set 
+----------
+ on
+(1 row)
+
+RESET pgzx_test.bool;
+SELECT current_setting('pgzx_test.bool') AS bool_reset;
+ bool_reset 
+------------
+ off
+(1 row)
+
+SELECT current_setting('pgzx_test.int') AS int_default;
+ int_default 
+-------------
+ 42
+(1 row)
+
+SET pgzx_test.int = -10;
+SELECT current_setting('pgzx_test.int') AS int_min;
+ int_min 
+---------
+ -10
+(1 row)
+
+SET pgzx_test.int = 100;
+SELECT current_setting('pgzx_test.int') AS int_max;
+ int_max 
+---------
+ 100
+(1 row)
+
+RESET pgzx_test.int;
+SELECT current_setting('pgzx_test.int') AS int_reset;
+ int_reset 
+-----------
+ 42
+(1 row)
+
+SELECT current_setting('pgzx_test.string') AS string_default;
+ string_default 
+----------------
+ shown-initial
+(1 row)
+
+SET pgzx_test.string = 'next';
+SELECT current_setting('pgzx_test.string') AS string_next;
+ string_next 
+-------------
+ shown-next
+(1 row)
+
+SET pgzx_test.string = '';
+SELECT current_setting('pgzx_test.string') AS string_empty;
+ string_empty 
+--------------
+ shown-empty
+(1 row)
+
+SET pgzx_test.string = ' spaced value ';
+SELECT current_setting('pgzx_test.string') AS string_spaced;
+ string_spaced 
+---------------
+ shown-spaced
+(1 row)
+
+SET pgzx_test.string = 'next';
+DO $$
+BEGIN
+    SET pgzx_test.bool = 'not-a-bool';
+    RAISE EXCEPTION 'expected invalid bool' USING ERRCODE = 'P0001';
+EXCEPTION
+    WHEN invalid_parameter_value THEN NULL;
+END
+$$;
+DO $$
+BEGIN
+    SET pgzx_test.int = 'not-an-int';
+    RAISE EXCEPTION 'expected invalid integer' USING ERRCODE = 'P0001';
+EXCEPTION
+    WHEN invalid_parameter_value THEN NULL;
+END
+$$;
+DO $$
+BEGIN
+    SET pgzx_test.int = 101;
+    RAISE EXCEPTION 'expected out-of-range integer' USING ERRCODE = 'P0001';
+EXCEPTION
+    WHEN invalid_parameter_value THEN NULL;
+END
+$$;
+DO $$
+BEGIN
+    SET pgzx_test.string = 'rejected';
+    RAISE EXCEPTION 'expected rejected string' USING ERRCODE = 'P0001';
+EXCEPTION
+    WHEN invalid_parameter_value THEN NULL;
+END
+$$;
+SELECT current_setting('pgzx_test.bool') AS bool_after_error;
+ bool_after_error 
+------------------
+ off
+(1 row)
+
+SELECT current_setting('pgzx_test.int') AS int_after_error;
+ int_after_error 
+-----------------
+ 42
+(1 row)
+
+SELECT current_setting('pgzx_test.string') AS string_after_error;
+ string_after_error 
+--------------------
+ shown-next
+(1 row)
+
+RESET pgzx_test.string;
+SELECT current_setting('pgzx_test.string') AS string_reset;
+ string_reset  
+---------------
+ shown-initial
+(1 row)
+

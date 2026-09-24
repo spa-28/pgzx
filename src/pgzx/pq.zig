@@ -192,7 +192,7 @@ pub const Conn = struct {
         defer arena.deinit();
         const local_allocator = arena.allocator();
 
-        var buffer = std.ArrayList(u8).init(local_allocator);
+        var buffer = std.ArrayList(u8).empty;
         return self.execParams(stmt, try buildParams(local_allocator, &buffer, args));
     }
 
@@ -201,7 +201,7 @@ pub const Conn = struct {
         defer arena.deinit();
         const local_allocator = arena.allocator();
 
-        var buffer = std.ArrayList(u8).init(local_allocator);
+        var buffer = std.ArrayList(u8).empty;
         var res = try self.execParams(
             command,
             try buildParams(local_allocator, &buffer, args),
@@ -272,7 +272,7 @@ pub const Conn = struct {
         defer arena.deinit();
         const local_allocator = arena.allocator();
 
-        var buffer = std.ArrayList(u8).init(local_allocator);
+        var buffer = std.ArrayList(u8).empty;
         try self.sendQueryParams(
             command,
             try buildParams(local_allocator, &buffer, args),
@@ -662,21 +662,27 @@ pub fn buildParams(
     // collect the pointers after the encoding buffer has been fully written.
     var value_indices = try local_allocator.alloc(i32, argsInfo.@"struct".fields.len);
 
-    const writer: std.ArrayList(u8).Writer = buffer.writer();
     var types = try allocator.alloc(pg.Oid, argsInfo.@"struct".fields.len);
+    errdefer allocator.free(types);
 
-    inline for (argsInfo.@"struct".fields, 0..) |field, idx| {
-        const codec = conv.find(field.type);
-        types[idx] = codec.OID;
+    {
+        var writer: std.Io.Writer.Allocating = .fromArrayList(allocator, buffer);
+        errdefer buffer.* = writer.toArrayList();
 
-        const initPos = buffer.items.len;
-        try codec.write(writer, @field(args, field.name));
-        const pos = buffer.items.len;
-        if (initPos == pos) {
-            value_indices[idx] = -1;
-        } else {
-            value_indices[idx] = @intCast(initPos);
+        inline for (argsInfo.@"struct".fields, 0..) |field, idx| {
+            const codec = conv.find(field.type);
+            types[idx] = codec.OID;
+
+            const initPos = writer.written().len;
+            try codec.write(&writer.writer, @field(args, field.name));
+            const pos = writer.written().len;
+            if (initPos == pos) {
+                value_indices[idx] = -1;
+            } else {
+                value_indices[idx] = @intCast(initPos);
+            }
         }
+        buffer.* = writer.toArrayList();
     }
 
     var values = try allocator.alloc([*c]const u8, value_indices.len);
@@ -760,11 +766,11 @@ pub const Rows = struct {
     }
 
     pub inline fn numRowsTotal(self: Rows) usize {
-        return @intCast(pg.PQntuples(self.result));
+        return @intCast(pg.PQntuples(self.result.result));
     }
 
     pub inline fn numRowsLeft(self: Rows) usize {
-        return self.numRowsTotal() - @as(usize, @intCast((self.rows + 1)));
+        return self.numRowsTotal() - @as(usize, @intCast(self.row + 1));
     }
 
     pub inline fn rowDescription(self: Rows) RowDescription {
@@ -790,22 +796,22 @@ pub const Tuple = struct {
     idx: isize,
 
     pub inline fn numFields(self: Tuple) usize {
-        return @intCast(pg.PQntuples(self.result));
+        return @intCast(pg.PQnfields(self.result.result));
     }
 
     pub inline fn field(self: Tuple, f: usize) Field {
         return .{ .result = self.result, .row = self.idx, .col = f };
     }
 
-    pub inline fn isNull(self: Tuple, f: isize) ?[:0]const u8 {
+    pub inline fn isNull(self: Tuple, f: usize) bool {
         return self.field(f).isNull();
     }
 
-    pub inline fn len(self: Tuple, f: isize) isize {
+    pub inline fn len(self: Tuple, f: usize) usize {
         return self.field(f).len();
     }
 
-    pub inline fn data(self: Tuple, f: isize) [*c]const u8 {
+    pub inline fn data(self: Tuple, f: usize) [*c]const u8 {
         return self.field(f).data();
     }
 };
@@ -823,8 +829,8 @@ pub const Field = struct {
         return pg.PQgetisnull(self.result.result, @intCast(self.row), @intCast(self.col)) == 1;
     }
 
-    pub fn len(self: Field) isize {
-        return pg.PQgetlength(self.result.result, @intCast(self.row), @intCast(self.col));
+    pub fn len(self: Field) usize {
+        return @intCast(pg.PQgetlength(self.result.result, @intCast(self.row), @intCast(self.col)));
     }
 
     pub fn data(self: Field) [*c]const u8 {
@@ -836,7 +842,7 @@ pub const RowDescription = struct {
     result: Result,
 
     pub fn len(self: RowDescription) usize {
-        return @intCast(pg.PQnfields(self.result));
+        return @intCast(pg.PQnfields(self.result.result));
     }
 
     pub fn field(self: RowDescription, idx: usize) ?FieldDescription {
@@ -886,3 +892,202 @@ fn pqError(src: std.builtin.SourceLocation, conn: ?*pg.PGconn) error{PGErrorStac
 
     return elog.Error(src, "{s}", .{std.mem.span(rawerr)});
 }
+
+pub const TestSuite_PQ = struct {
+    const allocator = @import("mem.zig").PGCurrentContextAllocator;
+
+    fn expectEncoded(comptime T: type, value: T, expected: []const u8) !void {
+        var writer: std.Io.Writer.Allocating = .init(allocator);
+        defer writer.deinit();
+        try conv.find(T).write(&writer.writer, value);
+        try std.testing.expectEqualSlices(u8, expected, writer.written());
+    }
+
+    fn expectIntegerRoundTrip(comptime T: type, value: T, expected: [:0]const u8) !void {
+        try expectEncoded(T, value, expected[0 .. expected.len + 1]);
+        try std.testing.expectEqual(value, try conv.find(T).parse(expected));
+    }
+
+    fn expectFloatRoundTrip(comptime T: type, value: T) !void {
+        var writer: std.Io.Writer.Allocating = .init(allocator);
+        defer writer.deinit();
+        try conv.find(T).write(&writer.writer, value);
+        const bytes = writer.written();
+        const encoded: [:0]const u8 = bytes[0 .. bytes.len - 1 :0];
+        try std.testing.expectApproxEqRel(value, try conv.find(T).parse(encoded), 0.00001);
+    }
+
+    pub fn testCodecOIDs() !void {
+        inline for (.{
+            .{ bool, pg.BOOLOID },
+            .{ i8, pg.INT2OID },
+            .{ i16, pg.INT2OID },
+            .{ i32, pg.INT4OID },
+            .{ i64, pg.INT8OID },
+            .{ u8, pg.INT2OID },
+            .{ u16, pg.INT4OID },
+            .{ u32, pg.INT8OID },
+            .{ f32, pg.FLOAT4OID },
+            .{ f64, pg.FLOAT8OID },
+            .{ []const u8, pg.TEXTOID },
+            .{ [:0]const u8, pg.TEXTOID },
+            .{ ?i32, pg.INT4OID },
+        }) |entry| {
+            try std.testing.expectEqual(@as(pg.Oid, entry[1]), conv.find(entry[0]).OID);
+        }
+    }
+
+    pub fn testBoolCodec() !void {
+        try expectEncoded(bool, true, "t\x00");
+        try expectEncoded(bool, false, "f\x00");
+        try std.testing.expect(try conv.find(bool).parse("t"));
+        try std.testing.expect(!try conv.find(bool).parse("f"));
+        try std.testing.expectError(conv.Error.InvalidBool, conv.find(bool).parse(""));
+        try std.testing.expectError(conv.Error.InvalidBool, conv.find(bool).parse("true"));
+        try std.testing.expectError(conv.Error.InvalidBool, conv.find(bool).parse("x"));
+    }
+
+    pub fn testIntegerCodecs() !void {
+        try expectIntegerRoundTrip(i8, std.math.minInt(i8), "-128");
+        try expectIntegerRoundTrip(i8, std.math.maxInt(i8), "127");
+        try expectIntegerRoundTrip(i16, std.math.minInt(i16), "-32768");
+        try expectIntegerRoundTrip(i16, std.math.maxInt(i16), "32767");
+        try expectIntegerRoundTrip(i32, std.math.minInt(i32), "-2147483648");
+        try expectIntegerRoundTrip(i32, std.math.maxInt(i32), "2147483647");
+        try expectIntegerRoundTrip(i64, std.math.minInt(i64), "-9223372036854775808");
+        try expectIntegerRoundTrip(i64, std.math.maxInt(i64), "9223372036854775807");
+        try expectIntegerRoundTrip(u8, std.math.maxInt(u8), "255");
+        try expectIntegerRoundTrip(u16, std.math.maxInt(u16), "65535");
+        try expectIntegerRoundTrip(u32, std.math.maxInt(u32), "4294967295");
+
+        try std.testing.expectError(error.InvalidCharacter, conv.find(i32).parse("not-a-number"));
+        try std.testing.expectError(error.Overflow, conv.find(i8).parse("128"));
+        try std.testing.expectError(error.Overflow, conv.find(u8).parse("256"));
+    }
+
+    pub fn testFloatAndTextCodecs() !void {
+        try expectFloatRoundTrip(f32, -1.25);
+        try expectFloatRoundTrip(f64, 42.5);
+        try std.testing.expectError(error.InvalidCharacter, conv.find(f64).parse("not-a-float"));
+
+        const text: []const u8 = "zig";
+        try expectEncoded([]const u8, text, "zig\x00");
+        try std.testing.expectEqualStrings(text, try conv.find([]const u8).parse("zig"));
+
+        const text_z: [:0]const u8 = "sentinel";
+        try expectEncoded([:0]const u8, text_z, "sentinel\x00");
+        const parsed_z = try conv.find([:0]const u8).parse("sentinel");
+        try std.testing.expectEqualStrings(text_z, parsed_z);
+        try std.testing.expectEqual(@as(u8, 0), parsed_z.ptr[parsed_z.len]);
+
+        try expectEncoded(?i32, null, "");
+        try expectEncoded(?i32, 42, "42\x00");
+        try expectEncoded([]const u8, "", "\x00");
+    }
+
+    pub fn testBuildParams() !void {
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(allocator);
+
+        var long: [2048]u8 = undefined;
+        @memset(&long, 'x');
+        const params = try buildParams(allocator, &buffer, .{
+            @as(i32, 42),
+            @as(?bool, null),
+            @as([]const u8, ""),
+            @as([]const u8, &long),
+            @as([:0]const u8, "tail"),
+        });
+        defer allocator.free(params.types.?);
+        defer allocator.free(params.values);
+
+        try std.testing.expectEqualSlices(pg.Oid, &.{ pg.INT4OID, pg.BOOLOID, pg.TEXTOID, pg.TEXTOID, pg.TEXTOID }, params.types.?);
+        try std.testing.expectEqual(@as(usize, 2058), buffer.items.len);
+        try std.testing.expectEqualSlices(u8, "42", buffer.items[0..2]);
+        try std.testing.expectEqual(@as(u8, 0), buffer.items[2]);
+        try std.testing.expectEqual(@as(u8, 0), buffer.items[3]);
+        try std.testing.expectEqualSlices(u8, &long, buffer.items[4..2052]);
+        try std.testing.expectEqual(@as(u8, 0), buffer.items[2052]);
+        try std.testing.expectEqualSlices(u8, "tail", buffer.items[2053..2057]);
+        try std.testing.expectEqual(@as(u8, 0), buffer.items[2057]);
+
+        const offsets = [_]?usize{ 0, null, 3, 4, 2053 };
+        for (params.values, offsets) |value, offset| {
+            if (offset) |position| {
+                try std.testing.expectEqual(
+                    @intFromPtr(buffer.items.ptr + position),
+                    @intFromPtr(value),
+                );
+            } else {
+                try std.testing.expect(value == null);
+            }
+        }
+    }
+
+    pub fn testSyntheticRows() !void {
+        const raw = pg.PQmakeEmptyPGresult(null, pg.PGRES_TUPLES_OK) orelse return error.OutOfMemory;
+        errdefer pg.PQclear(raw);
+
+        var attrs = [_]pg.PGresAttDesc{
+            .{
+                .name = @constCast("id".ptr),
+                .tableid = 11,
+                .columnid = 1,
+                .format = 0,
+                .typid = pg.INT4OID,
+                .typlen = 4,
+                .atttypmod = -1,
+            },
+            .{
+                .name = @constCast("label".ptr),
+                .tableid = 11,
+                .columnid = 2,
+                .format = 1,
+                .typid = pg.TEXTOID,
+                .typlen = -1,
+                .atttypmod = 12,
+            },
+        };
+        try std.testing.expectEqual(@as(c_int, 1), pg.PQsetResultAttrs(raw, attrs.len, &attrs));
+        try std.testing.expectEqual(@as(c_int, 1), pg.PQsetvalue(raw, 0, 0, @constCast("1".ptr), 1));
+        try std.testing.expectEqual(@as(c_int, 1), pg.PQsetvalue(raw, 0, 1, @constCast("alpha".ptr), 5));
+        try std.testing.expectEqual(@as(c_int, 1), pg.PQsetvalue(raw, 1, 0, @constCast("22".ptr), 2));
+        try std.testing.expectEqual(@as(c_int, 1), pg.PQsetvalue(raw, 1, 1, null, 0));
+
+        var rows = Rows.init(Result.init(raw));
+        defer rows.deinit();
+
+        try std.testing.expectEqual(@as(usize, 2), rows.numRowsTotal());
+        try std.testing.expectEqual(@as(usize, 2), rows.numRowsLeft());
+
+        const description = rows.rowDescription();
+        try std.testing.expectEqual(@as(usize, 2), description.len());
+        const id = description.field(0).?;
+        try std.testing.expectEqualStrings("id", id.name().?);
+        try std.testing.expectEqual(@as(pg.Oid, pg.INT4OID), id.typeOID());
+        try std.testing.expectEqual(FormatCode.Text, id.format());
+        try std.testing.expectEqual(@as(isize, 4), id.size());
+        try std.testing.expectEqual(@as(c_int, -1), id.modifier());
+        const label = description.field(1).?;
+        try std.testing.expectEqualStrings("label", label.name().?);
+        try std.testing.expectEqual(@as(pg.Oid, pg.TEXTOID), label.typeOID());
+        try std.testing.expectEqual(FormatCode.Binary, label.format());
+        try std.testing.expectEqual(@as(isize, -1), label.size());
+        try std.testing.expectEqual(@as(c_int, 12), label.modifier());
+        try std.testing.expect(description.field(2) == null);
+
+        const first = rows.next().?;
+        try std.testing.expectEqual(@as(usize, 2), first.numFields());
+        try std.testing.expect(!first.isNull(0));
+        try std.testing.expectEqualSlices(u8, "1", first.data(0)[0..first.len(0)]);
+        try std.testing.expectEqualSlices(u8, "alpha", first.data(1)[0..first.len(1)]);
+        try std.testing.expectEqual(@as(usize, 1), rows.numRowsLeft());
+
+        const second = rows.next().?;
+        try std.testing.expectEqualSlices(u8, "22", second.data(0)[0..second.len(0)]);
+        try std.testing.expect(second.isNull(1));
+        try std.testing.expectEqual(@as(usize, 0), second.len(1));
+        try std.testing.expectEqual(@as(usize, 0), rows.numRowsLeft());
+        try std.testing.expect(rows.next() == null);
+    }
+};

@@ -166,7 +166,7 @@ pub fn OwnedSPIFrameRows(comptime R: type) type {
             return self.rows.next();
         }
 
-        pub const scan = if (@hasField(R, "scan"))
+        pub const scan = if (@hasDecl(R, "scan"))
             R.scan
         else
             @compileError("no scan method available");
@@ -275,10 +275,10 @@ const SPIFrame = struct {
 };
 
 pub fn convProcessed(comptime T: type, row: c_int, col: c_int) !T {
-    if (pg.SPI_processed <= row) {
+    if (row < 0 or @as(u64, @intCast(row)) >= pg.SPI_processed) {
         return err.PGError.SPIInvalidRowIndex;
     }
-    return convBinValue(T, SPIFrame.get(), row, col);
+    return convBinValue(T, SPIFrame.get(), @intCast(row), col);
 }
 
 pub fn convBinValue(comptime T: type, frame: SPIFrame, row: usize, col: c_int) !T {
@@ -311,3 +311,130 @@ fn checkStatus(st: c_int) err.PGError!void {
         },
     }
 }
+
+pub const TestSuite_SPI = struct {
+    const TypedRow = struct {
+        number: i32,
+        flag: bool,
+        text: [:0]const u8,
+        nullable: ?i32,
+    };
+
+    pub fn testUnconnectedAndArgumentGuards() !void {
+        try std.testing.expectError(err.PGError.SPIUnconnected, exec("SELECT 1", .{}));
+
+        const non_null = Args{
+            .types = &.{pg.INT4OID},
+            .values = &.{.{ .value = 0, .isnull = false }},
+        };
+        try std.testing.expect(!non_null.has_nulls());
+
+        const with_null = Args{
+            .types = &.{pg.INT4OID},
+            .values = &.{.{ .value = 0, .isnull = true }},
+        };
+        try std.testing.expect(with_null.has_nulls());
+
+        const mismatched = Args{
+            .types = &.{pg.INT4OID},
+            .values = &.{},
+        };
+        try std.testing.expectError(err.PGError.SPIArgument, query("SELECT 1", .{ .args = mismatched }));
+    }
+
+    pub fn testTypedArguments() !void {
+        try connect();
+        defer finish();
+
+        const types = [_]pg.Oid{ pg.INT4OID, pg.TEXTOID, pg.INT4OID };
+        const values = [_]pg.NullableDatum{
+            try datum.toNullableDatum(@as(i32, -42)),
+            try datum.toNullableDatumWithOID(@as([]const u8, ""), pg.TEXTOID),
+            try datum.toNullableDatum(@as(?i32, null)),
+        };
+        var rows = try queryTyped(TypedRow, "SELECT $1, true, $2, $3", .{
+            .args = .{ .types = &types, .values = &values },
+        });
+        defer rows.deinit();
+
+        const row = (try rows.next()).?;
+        try std.testing.expectEqual(@as(i32, -42), row.number);
+        try std.testing.expect(row.flag);
+        try std.testing.expectEqualStrings("", row.text);
+        try std.testing.expectEqual(@as(?i32, null), row.nullable);
+        try std.testing.expectEqual(@as(?TypedRow, null), try rows.next());
+    }
+
+    pub fn testScanAndProcessedGuards() !void {
+        try connect();
+        defer finish();
+
+        var rows = try query("VALUES (1::int4, 'one'::text), (2::int4, 'two'::text)", .{});
+        defer rows.deinit();
+
+        var number: i32 = undefined;
+        var text: [:0]const u8 = undefined;
+        try std.testing.expectError(err.PGError.SPIInvalidRowIndex, rows.scan(.{ &number, &text }));
+        try std.testing.expectError(err.PGError.SPIInvalidRowIndex, convProcessed(i32, 2, 1));
+
+        try std.testing.expect(rows.next());
+        try rows.scan(.{ &number, &text });
+        try std.testing.expectEqual(@as(i32, 1), number);
+        try std.testing.expectEqualStrings("one", text);
+
+        try std.testing.expect(rows.next());
+        try rows.scan(.{ &number, &text });
+        try std.testing.expectEqual(@as(i32, 2), number);
+        try std.testing.expectEqualStrings("two", text);
+        try std.testing.expect(!rows.next());
+        try std.testing.expect(!rows.next());
+    }
+
+    pub fn testStatusAndLimit() !void {
+        try connect();
+        defer finish();
+
+        try std.testing.expectEqual(@as(isize, pg.SPI_OK_SELECT), try exec("SELECT 1", .{}));
+
+        var rows = try queryTyped(i32, "SELECT generate_series(1, 5)", .{ .limit = 2 });
+        defer rows.deinit();
+
+        try std.testing.expectEqual(@as(?i32, 1), try rows.next());
+        try std.testing.expectEqual(@as(?i32, 2), try rows.next());
+        try std.testing.expectEqual(@as(?i32, null), try rows.next());
+    }
+
+    pub fn testNestedFramesPreserveParentRows() !void {
+        try connect();
+        defer finish();
+
+        var parent = try queryTyped(i32, "VALUES (1::int4), (2::int4)", .{});
+        defer parent.deinit();
+        try std.testing.expectEqual(@as(?i32, 1), try parent.next());
+
+        {
+            try connect();
+            defer finish();
+
+            var child = try queryTyped([:0]const u8, "SELECT 'child'::text", .{});
+            defer child.deinit();
+            try std.testing.expectEqualStrings("child", (try child.next()).?);
+        }
+
+        try std.testing.expectEqual(@as(?i32, 2), try parent.next());
+        try std.testing.expectEqual(@as(?i32, null), try parent.next());
+    }
+
+    pub fn testOwnedFrameCleanup() !void {
+        {
+            try connect();
+            var rows = (try queryTyped(i32, "SELECT 9::int4", .{})).ownedSPIFrame();
+            defer rows.deinit();
+
+            try std.testing.expectEqual(@as(?i32, 9), try rows.next());
+            try std.testing.expectEqual(@as(?i32, null), try rows.next());
+        }
+
+        try std.testing.expectError(err.PGError.SPIUnconnected, exec("SELECT 1", .{}));
+    }
+};

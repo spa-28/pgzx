@@ -49,6 +49,8 @@ pub fn build(b: *std.Build) void {
 
         // Host C headers: libpq-be.h pulls in openssl/ssl.h and gssapi.h.
         // translate-c does not add the system include dirs on its own.
+        addNixSystemIncludePaths(b, translate_c);
+
         // The multiarch dir is where Debian keeps opensslconf.h.
         translate_c.addIncludePath(.{
             .cwd_relative = "/usr/include",
@@ -61,6 +63,7 @@ pub fn build(b: *std.Build) void {
 
         // Internal C headers
         module.addIncludePath(b.path("./src/pgzx/c/include/"));
+        addNixSystemIncludePaths(b, module);
 
         // libpq support
         module.addCSourceFiles(.{
@@ -197,5 +200,29 @@ pub fn build(b: *std.Build) void {
 
         psql_run_tests.step.dependOn(&test_ext.step);
         steps.unit.dependOn(&psql_run_tests.step);
+
+        const regress = pgbuild.addRegress(.{
+            .db_user = "postgres",
+            .db_port = 5432,
+            .root_dir = "src/testing",
+            .scripts = &.{ "fmgr", "guc" },
+        });
+        regress.step.dependOn(&test_ext.step);
+        steps.unit.dependOn(&regress.step);
+    }
+}
+
+fn addNixSystemIncludePaths(b: *std.Build, target: anytype) void {
+    const cflags = b.graph.environ_map.get("NIX_CFLAGS_COMPILE") orelse return;
+    var args = std.mem.tokenizeAny(u8, cflags, " \t\r\n");
+    while (args.next()) |arg| {
+        const prefix = "-isystem";
+        const path = if (std.mem.eql(u8, arg, prefix))
+            args.next() orelse @panic("-isystem is missing its path")
+        else if (std.mem.startsWith(u8, arg, prefix) and arg.len > prefix.len)
+            arg[prefix.len..]
+        else
+            continue;
+        target.addSystemIncludePath(.{ .cwd_relative = path });
     }
 }

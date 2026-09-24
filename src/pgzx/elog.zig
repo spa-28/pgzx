@@ -135,7 +135,7 @@ pub inline fn errsave_start(context: ?*pg.Node, domain: ?[:0]const u8) bool {
 
 pub inline fn errsave_finish(src: SourceLocation, context: ?*pg.Node, kargs: struct { allow_longjmp: bool }) err.ElogIndicator!void {
     if (kargs.allow_longjmp) {
-        pg.errsave_finish(context, src.file, @as(c_int, @intCast(src.line)), src.fn_name);
+        return pg.errsave_finish(context, src.file, @as(c_int, @intCast(src.line)), src.fn_name);
     }
     try err.wrap(pg.errsave_finish, .{ context, src.file, @as(c_int, @intCast(src.line)), src.fn_name });
 }
@@ -615,3 +615,78 @@ fn sendElogWithCause(src: SourceLocation, comptime level: c_int, cause: anyerror
 
     api.errfinish(src, .{ .allow_longjmp = true }) catch unreachable;
 }
+
+fn copyAndFlushTestErrorData() [*c]pg.ErrorData {
+    const error_data = pg.CopyErrorData();
+    pg.FlushErrorState();
+    return error_data;
+}
+
+pub const TestSuite_Elog = struct {
+    pub fn testEreportNoJump() !void {
+        ereportNoJump(@src(), .Error, .{
+            errcode(pg.ERRCODE_INVALID_PARAMETER_VALUE),
+            errmsg("invalid value: {s}", .{"test"}),
+            errdetail("expected detail", .{}),
+            errhint("expected hint", .{}),
+            errschema("expected_schema"),
+            errtable("expected_table"),
+            errcolumn("expected_column"),
+            errdatatype("expected_type"),
+            errconstraint("expected_constraint"),
+        }) catch |caught| {
+            const error_data = copyAndFlushTestErrorData();
+            if (error_data == null) return error.MissingErrorData;
+            defer pg.FreeErrorData(error_data);
+
+            try std.testing.expectEqual(error.PGErrorStack, caught);
+            try std.testing.expectEqual(pg.ERRCODE_INVALID_PARAMETER_VALUE, error_data.*.sqlerrcode);
+            try std.testing.expectEqualStrings("invalid value: test", std.mem.span(error_data.*.message));
+            try std.testing.expectEqualStrings("expected detail", std.mem.span(error_data.*.detail));
+            try std.testing.expectEqualStrings("expected hint", std.mem.span(error_data.*.hint));
+            try std.testing.expectEqualStrings("expected_schema", std.mem.span(error_data.*.schema_name));
+            try std.testing.expectEqualStrings("expected_table", std.mem.span(error_data.*.table_name));
+            try std.testing.expectEqualStrings("expected_column", std.mem.span(error_data.*.column_name));
+            try std.testing.expectEqualStrings("expected_type", std.mem.span(error_data.*.datatype_name));
+            try std.testing.expectEqualStrings("expected_constraint", std.mem.span(error_data.*.constraint_name));
+            return;
+        };
+        return error.ExpectedPostgresError;
+    }
+
+    pub fn testErrorHelpers() !void {
+        try std.testing.expect(!isPostgresError(error.TestError));
+        try std.testing.expect(!emitIfPGError(error.TestError));
+
+        const caught = Error(@src(), "expected Error helper", .{});
+        const error_data = copyAndFlushTestErrorData();
+        if (error_data == null) return error.MissingErrorData;
+        defer pg.FreeErrorData(error_data);
+
+        try std.testing.expect(isPostgresError(caught));
+        try std.testing.expectEqualStrings("expected Error helper", std.mem.span(error_data.*.message));
+    }
+
+    pub fn testErrsaveSoftError() !void {
+        if (comptime pg.PG_VERSION_NUM >= 160000) {
+            var save = std.mem.zeroInit(pg.ErrorSaveContext, .{
+                .type = @as(pg.NodeTag, @intCast(pg.T_ErrorSaveContext)),
+                .details_wanted = true,
+            });
+
+            errsave(@src(), @ptrCast(&save), .{
+                errcode(pg.ERRCODE_INVALID_TEXT_REPRESENTATION),
+                errmsg("expected soft error", .{}),
+                errdetail("expected soft detail", .{}),
+            });
+
+            try std.testing.expect(save.error_occurred);
+            if (save.error_data == null) return error.MissingErrorData;
+            defer pg.FreeErrorData(save.error_data);
+
+            try std.testing.expectEqual(pg.ERRCODE_INVALID_TEXT_REPRESENTATION, save.error_data.*.sqlerrcode);
+            try std.testing.expectEqualStrings("expected soft error", std.mem.span(save.error_data.*.message));
+            try std.testing.expectEqualStrings("expected soft detail", std.mem.span(save.error_data.*.detail));
+        }
+    }
+};

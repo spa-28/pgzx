@@ -94,7 +94,7 @@ pub const AllocSetOptions = struct {
 pub fn createAllocSetContext(comptime name: [:0]const u8, options: AllocSetOptions) error{PGErrorStack}!MemoryContextAllocator {
     const ctx: pg.MemoryContext = try err.wrap(
         pg.AllocSetContextCreateInternal,
-        .{ options.parent, name.ptr, options.init_size, options.min_size, options.max_size },
+        .{ options.parent, name.ptr, options.min_size, options.init_size, options.max_size },
     );
     return MemoryContextAllocator.init(ctx, .{
         .flags = options.flags,
