@@ -4,17 +4,8 @@
   # Inputs are the flake references that are used in the flake.
   # Nix will fetch the flake and stores the hash in the flake.lock file.
   inputs = {
-    # Nixpkgs provides the many packags that are normally available in NixOS.
-    #
-    # WARNING:
-    # We currently pin the verion to 0.2311.555610 to ensure that the zig build
-    # works correctly. Recent updates to nixpkgs did introduce breaking changes to
-    # the build environemnt variables, which makes the Zig compiler fail.
-    #
-    # Issue: https://github.com/ziglang/zig/issues/18998
-    # When resolves remove the '=' from the URL to update to the latest stable
-    # version of nixpkgs.
-    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/=0.2311.555610.tar.gz";
+    # Keep nixpkgs aligned with the version used and tested by pgzx.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     # Flake parts is a library to write flakes in a more modular way similar to
     # NixOS modules.
@@ -65,19 +56,31 @@
 
           src = ./.;
           nativeBuildInputs = [
-            pkgs.zigpkgs.master
+            pkgs.zigpkgs.stable
             pkgs.pkg-config
           ];
 
           buildInputs = [
             pkgs.openssl
+            pkgs.gss
+            pkgs.krb5
           ];
         };
 
         devShells.default = let
+          postgresVersion = inputs.pgzx.lib.postgres.defaultVersion;
+          postgresPackage = builtins.getAttr "postgresql_${postgresVersion}_jit" pkgs;
+          postgresql = pkgs.symlinkJoin {
+            name = "postgresql-${postgresVersion}-with-pg-config";
+            paths = [
+              postgresPackage
+              postgresPackage.pg_config
+            ];
+          };
+
           # Load the shell configuration from devshell.nix.
           userShell = (import ./devshell.nix) {
-            inherit lib pkgs;
+            inherit lib pkgs postgresql postgresVersion;
 
             # Pass the default package as project to the devshell. This
             # allows the devshell to import the project and its dependencies.

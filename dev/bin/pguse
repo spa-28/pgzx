@@ -5,7 +5,16 @@ set -x
 
 ROOTDIR=${PRJ_ROOT:-$(git rev-parse --show-toplevel)}
 WORKDIR=${WORKDIR:-"$ROOTDIR/out"}
-version=${1:-"16"}
+version=${1:-${PGZX_POSTGRES_VERSION:-}}
+
+if [ -z "$version" ]; then
+	echo "Usage: $0 <postgres-major-version>" >&2
+	exit 1
+fi
+if [ ! -d "$WORKDIR/$version" ]; then
+	echo "PostgreSQL $version is not installed in $WORKDIR" >&2
+	exit 1
+fi
 
 rm -f "$WORKDIR/default"
 ln -s "$WORKDIR/$version" "$WORKDIR/default"

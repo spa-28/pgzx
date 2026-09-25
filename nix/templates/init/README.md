@@ -9,6 +9,8 @@ My Extension
 $ nix develop
 ```
 
+The template follows pgzx's default supported Postgres version (currently Postgres 18).
+
 2. Relocate the postgres installation into our development environment and create a database.
 
 ```
@@ -21,15 +23,15 @@ $ pglocal && pginit
 $ pgstart
 ```
 
-4. Before you can build the extension you must edit the `build.zig.zon` file and update the hash value. To do so we run `zig build` and copy the hash value from the error message into the `build.zig.zon` file:
+4. The pgzx dependency follows `main`, so Zig must record the hash of its current contents. Run `zig build`, then copy the complete hash suggested by Zig into the commented `.hash` field in `build.zig.zon`:
 
 ```
 $ zig build
 
-Fetch Packages... pgzx... build.zig.zon:13:20: error: url field is missing corresponding hash field
+build.zig.zon:12:20: error: dependency is missing hash field
             .url = "https://github.com/xataio/pgzx/archive/main.tar.gz",
                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-note: expected .hash = "122097e7141a57b8170ca5288f5514b2b5b27b730a78d2aae7a5f54675ae1614c690",
+note: expected .hash = "pgzx-0.1.0-...",
 ```
 
 5. Compile and install the extension into the development server

@@ -133,7 +133,8 @@ pub inline fn pgCall(
     };
 
     const result_conv = datum.findConv(@TypeOf(value));
-    const nullable_datum = result_conv.toNullableDatum(value) catch |e| elog.throwAsPostgresError(src, e);
+    const return_oid = pg.get_fn_expr_rettype(fcinfo.*.flinfo);
+    const nullable_datum = result_conv.toNullableDatumWithOID(value, return_oid) catch |e| elog.throwAsPostgresError(src, e);
     if (nullable_datum.isnull) {
         fcinfo.*.isnull = true;
         return 0;

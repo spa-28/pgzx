@@ -107,7 +107,7 @@ const boolconv = struct {
         switch (buf[0]) {
             't' => return true,
             'f' => return false,
-            _ => return Error.InvalidBool,
+            else => return Error.InvalidBool,
         }
     }
 };
@@ -125,14 +125,12 @@ fn intconv(comptime T: type, comptime oid: pg.Oid) type {
         pub const Type = T;
 
         pub fn write(writer: anytype, value: T) !void {
-            try std.fmt.format(writer, "{d}", .{value});
+            try writer.print("{d}", .{value});
             try writer.writeByte(0);
         }
 
         pub fn parse(buf: [:0]const u8) !T {
-            var result: T = undefined;
-            try std.fmt.parseInt(buf, &result, 10);
-            return result;
+            return std.fmt.parseInt(T, buf, 10);
         }
     };
 }
@@ -145,14 +143,12 @@ fn floatconv(comptime T: type, comptime oid: pg.Oid) type {
         pub const Type = T;
 
         pub fn write(writer: anytype, value: T) !void {
-            try std.fmt.format(writer, "{f}", .{value});
+            try writer.print("{d}", .{value});
             try writer.writeByte(0);
         }
 
         pub fn parse(buf: [:0]const u8) !T {
-            var result: T = undefined;
-            try std.fmt.parseFloat(buf, &result);
-            return result;
+            return std.fmt.parseFloat(T, buf);
         }
     };
 }
@@ -162,7 +158,7 @@ const textconv = struct {
     pub const Type = []const u8;
 
     pub fn write(writer: anytype, value: []const u8) !void {
-        _ = try writer.write(value);
+        try writer.writeAll(value);
         try writer.writeByte(0);
     }
 
@@ -176,7 +172,7 @@ const textzconv = struct {
     pub const Type = [:0]const u8;
 
     pub fn write(writer: anytype, value: [:0]const u8) !void {
-        _ = try writer.write(value);
+        try writer.writeAll(value);
         try writer.writeByte(0);
     }
 

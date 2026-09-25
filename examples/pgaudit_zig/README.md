@@ -57,7 +57,7 @@ psql -U postgres
 At the Postgres prompt, load the library and create the extension:
 
 ```sql
-LOAD 'pg_audit_zig.dylib';
+LOAD 'pgaudit_zig';
 CREATE EXTENSION pgaudit_zig;
 ```
 
@@ -90,7 +90,7 @@ comptime {
 
 ### Logging
 
-pgrx provides an elog utility that integrates with Postgres' logging system. It is initialized like this:
+pgzx provides an elog utility that integrates with Postgres' logging system. It is initialized like this:
 
 ```zig
 pub const std_options = std.Options{
@@ -150,7 +150,10 @@ In the `_PG_init` function, we register the hooks we want to use. This is done p
     pg.ExecutorFinish_hook = pgaudit_zig_ExecutorFinish_hook;
 
     prev_ExecutorCheckPerms_hook = pg.ExecutorCheckPerms_hook;
-    pg.ExecutorCheckPerms_hook = pgaudit_zig_ExecutorCheckPerms_hook;
+    pg.ExecutorCheckPerms_hook = if (pg.PG_VERSION_NUM >= 160000)
+        pgaudit_zig_ExecutorCheckPerms_hook
+    else
+        pgaudit_zig_ExecutorCheckPerms_hook_pg15;
 ```
 
 The hooks implementation need to respect the function signature of the hooks, and are marked with `callconv(.c)`:
@@ -178,7 +181,7 @@ pgzx offers custom wrapper Zig allocators that use Postgres' memory context syst
     global_memctx = pgzx.mem.createAllocSetContext("pgaudit_zig_context_global", .{ .parent = pg.TopMemoryContext }) catch |err| {
         return pgzx.elog.Error(@src(), "pgaudit_zig: failed to create memory context: {}\n", .{err});
     };
-    audit_events_list = std.ArrayList(*AuditEvent).init(global_memctx.allocator());
+    audit_events_list = std.ArrayList(*AuditEvent).empty;
 ```
 
 Later in the code, where we are in the context of a particular query execution, we create a child context and use it as the allocator for the memory we need. Note the use of `pg.CurrentMemoryContext` as the parent context:
@@ -215,15 +218,17 @@ In Postgres, it's possible to register a callback for when the memory context is
     );
 ```
 
-For another example, if you need a short-lived memory allocator that is exists only for the duration of the current function, you can see an example in the `logAuditEvent` function:
+For short-lived formatting, `logAuditEvent` uses the current PostgreSQL memory context and Zig 0.16's allocating writer:
 
 ```zig
-    var log_memctx = try pgzx.mem.createAllocSetContext("pgaudit_zig_context_log", .{ .parent = pg.CurrentMemoryContext });
-    defer log_memctx.deinit();
+    var string = std.ArrayList(u8).empty;
+    defer string.deinit(pgzx.mem.PGCurrentContextAllocator);
+    var str_writer: std.Io.Writer.Allocating = .fromArrayList(pgzx.mem.PGCurrentContextAllocator, &string);
+    defer str_writer.deinit();
 
-    var string = std.ArrayList(u8).init(log_memctx.allocator());
-    defer string.deinit();
-    var writer = string.writer();
+    try eventToJSON(event, &str_writer.writer);
+    try str_writer.writer.flush();
+    string = str_writer.toArrayList();
 ```
 
 ### Error handling

@@ -2,7 +2,7 @@
   description = "Description for the project";
 
   inputs = {
-    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2405.635732.tar.gz";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     parts.url = "github:hercules-ci/flake-parts";
 
@@ -11,9 +11,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     zls = {
-      url = "github:zigtools/zls";
+      url = "github:zigtools/zls/0.16.0";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.zig-overlay.follows = "zig-overlay";
     };
 
     pre-commit-hooks-nix = {
@@ -27,7 +26,21 @@
     nixpkgs,
     ...
   }: let
+    lib = nixpkgs.lib;
     zig-stable = "0.16.0";
+
+    postgresVersions = ["15" "16" "17" "18"];
+    defaultPostgresVersion = lib.last postgresVersions;
+    mkPostgres = pkgs: version: let
+      postgresql = builtins.getAttr "postgresql_${version}_jit" pkgs;
+    in
+      pkgs.symlinkJoin {
+        name = "postgresql-${version}-with-pg-config";
+        paths = [
+          postgresql
+          postgresql.pg_config
+        ];
+      };
 
     zig-overlay = _final: prev: let
       orig = inputs.zig-overlay.packages.${prev.system};
@@ -53,8 +66,13 @@
         ./nix/modules/nixpkgs.nix
       ];
 
+      flake.lib.postgres = {
+        versions = postgresVersions;
+        defaultVersion = defaultPostgresVersion;
+      };
+
       flake.overlays = rec {
-        default = nixpkgs.lib.composeManyExtensions [
+        default = lib.composeManyExtensions [
           zigpkgs
           zls
           pgzx_scripts
@@ -92,6 +110,7 @@
 
         pre-commit.pkgs = pkgs;
         pre-commit.settings = {
+          default_stages = [];
           hooks = {
             # editorconfig-checker.enable = true;
 
@@ -132,65 +151,73 @@
         };
 
         devShells = let
-          devshell_nix = (import ./devshell.nix) {
-            inherit pkgs;
-            inherit lib;
-          };
-
-          user_shell =
-            devshell_nix
+          mkShell = pkgs.mkShell;
+          mkUserShell = postgresVersion: let
+            postgresql = mkPostgres pkgs postgresVersion;
+            devshell = (import ./devshell.nix) {
+              inherit lib pkgs postgresql postgresVersion;
+            };
+          in
+            devshell
             // {
               shellHook = ''
-                ${devshell_nix.shellHook or ""}
+                ${devshell.shellHook or ""}
                 ${config.pre-commit.devShell.shellHook or ""}
               '';
             };
 
-          mkShell = pkgs.mkShell;
+          userShells = lib.genAttrs postgresVersions mkUserShell;
+          postgresShells =
+            lib.mapAttrs'
+            (version: userShell: lib.nameValuePair "pg${version}" (mkShell userShell))
+            userShells;
+          defaultUserShell = userShells.${defaultPostgresVersion};
 
           # On darwin we expect command line tools to be installed.
           # It is possible to install clang/gcc as nix package, but linking
           # can be quite a pain.
           # On non-darwin systems we will use the nix toolchain for now.
           useSystemCC = pkgs.stdenv.isDarwin;
-        in {
-          default = mkShell user_shell;
+        in
+          postgresShells
+          // {
+            default = postgresShells."pg${defaultPostgresVersion}";
 
-          # Create development shell with C tools and dependencies to build Postgres locally.
-          debug = mkShell (user_shell
-            // {
-              hardeningDisable = ["all"];
+            # Create development shell with C tools and dependencies to build Postgres locally.
+            debug = mkShell (defaultUserShell
+              // {
+                hardeningDisable = ["all"];
 
-              packages =
-                user_shell.packages
-                ++ [
-                  pkgs.flex
-                  pkgs.bison
-                  pkgs.meson
-                  pkgs.ninja
-                  pkgs.ccache
-                  pkgs.pkg-config
-                  pkgs.cmake
+                packages =
+                  defaultUserShell.packages
+                  ++ [
+                    pkgs.flex
+                    pkgs.bison
+                    pkgs.meson
+                    pkgs.ninja
+                    pkgs.ccache
+                    pkgs.pkg-config
+                    pkgs.cmake
 
-                  pkgs.icu
-                  pkgs.zip
-                  pkgs.readline
-                  pkgs.openssl
-                  pkgs.libxml2
-                  pkgs.llvmPackages_17.llvm
-                  pkgs.llvmPackages_17.lld
-                  pkgs.llvmPackages_17.clang
-                  pkgs.llvmPackages_17.clang-unwrapped
-                  pkgs.lz4
-                  pkgs.zstd
-                  pkgs.libxslt
-                  pkgs.python3
-                ]
-                ++ (lib.optionals (!useSystemCC) [
-                  pkgs.clang
-                ]);
-            });
-        };
+                    pkgs.icu
+                    pkgs.zip
+                    pkgs.readline
+                    pkgs.openssl
+                    pkgs.libxml2
+                    pkgs.llvmPackages_17.llvm
+                    pkgs.llvmPackages_17.lld
+                    pkgs.llvmPackages_17.clang
+                    pkgs.llvmPackages_17.clang-unwrapped
+                    pkgs.lz4
+                    pkgs.zstd
+                    pkgs.libxslt
+                    pkgs.python3
+                  ]
+                  ++ (lib.optionals (!useSystemCC) [
+                    pkgs.clang
+                  ]);
+              });
+          };
       };
     };
 }

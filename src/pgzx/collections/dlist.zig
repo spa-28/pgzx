@@ -81,7 +81,7 @@ pub fn DList(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type 
         }
 
         pub inline fn isEmpty(self: *const Self) bool {
-            return pg.dlist_is_empty(&self.list);
+            return pg.dlist_is_empty(@constCast(&self.list));
         }
 
         pub inline fn headNode(self: *const Self) *T {
@@ -133,11 +133,11 @@ pub fn DList(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type 
         }
 
         pub inline fn nextNode(self: *const Self, node: *T) *T {
-            return descr.nodeParentPtr(pg.dlist_next_node(&self.list, descr.nodePtr(node)));
+            return descr.nodeParentPtr(pg.dlist_next_node(@constCast(&self.list), descr.nodePtr(node)));
         }
 
         pub inline fn prevNode(self: *const Self, node: *T) *T {
-            return descr.nodeParentPtr(pg.dlist_prev_node(&self.list, descr.nodePtr(node)));
+            return descr.nodeParentPtr(pg.dlist_prev_node(@constCast(&self.list), descr.nodePtr(node)));
         }
 
         pub inline fn iterator(self: *const Self) Iterator {
@@ -157,11 +157,23 @@ pub fn DList(comptime T: type, comptime node_field: std.meta.FieldEnum(T)) type 
         }
 
         pub inline fn deleteThorougly(node: *T) void {
-            pg.dlist_delete_thoroughly(descr.nodePtr(node));
+            const list_node = descr.nodePtr(node);
+            if (pg.PG_VERSION_NUM >= 160000) {
+                pg.dlist_delete_thoroughly(list_node);
+            } else {
+                pg.dlist_delete(list_node);
+                list_node.next = null;
+                list_node.prev = null;
+            }
         }
 
         pub inline fn isDetached(node: *T) bool {
-            return pg.dlist_is_detached(descr.nodePtr(node));
+            const list_node = descr.nodePtr(node);
+            if (pg.PG_VERSION_NUM >= 160000) {
+                return pg.dlist_node_is_detached(list_node);
+            }
+            std.debug.assert((list_node.next == null) == (list_node.prev == null));
+            return list_node.next == null;
         }
     };
 }
@@ -363,6 +375,7 @@ pub const TestSuite_DList = struct {
 
         TList.deleteThorougly(&elems[1]);
         try std.testing.expectEqual(2, list.count());
+        try std.testing.expect(TList.isDetached(&elems[1]));
         try std.testing.expectEqual(elems[1].node.next, null);
         try std.testing.expectEqual(elems[1].node.prev, null);
     }

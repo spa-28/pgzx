@@ -208,7 +208,7 @@ inline fn normalizeOid(oid: ?pg.Oid) pg.Oid {
 }
 
 pub const Void = SimpleConv(void, idDatum, toVoid);
-pub const Bool = SimpleConv(bool, pg.DatumGetBool, pg.BoolGetDatum);
+pub const Bool = SimpleConv(bool, datumGetBool, boolGetDatum);
 pub const Int8 = SimpleConv(i8, datumGetInt8, pg.Int8GetDatum);
 pub const Int16 = SimpleConv(i16, pg.DatumGetInt16, pg.Int16GetDatum);
 pub const Int32 = SimpleConv(i32, pg.DatumGetInt32, pg.Int32GetDatum);
@@ -241,13 +241,21 @@ fn idDatum(d: pg.Datum) pg.Datum {
     return d;
 }
 
+fn datumGetBool(d: pg.Datum) bool {
+    return d != 0;
+}
+
+fn boolGetDatum(value: bool) pg.Datum {
+    return @intFromBool(value);
+}
+
 fn toVoid(d: void) pg.Datum {
     _ = d;
     return 0;
 }
 
 fn datumGetInt8(d: pg.Datum) i8 {
-    return @as(i8, @bitCast(@as(i8, @truncate(d))));
+    return @bitCast(@as(u8, @truncate(d)));
 }
 
 pub fn getDatumStringLike(datum: pg.Datum, oid: pg.Oid) ![]const u8 {
@@ -265,7 +273,27 @@ pub inline fn getDatumCString(datum: pg.Datum) ![]const u8 {
 }
 
 pub fn getDatumStringLikeZ(datum: pg.Datum, oid: pg.Oid) ![:0]const u8 {
-    return if (useStringPointer(oid)) getDatumCStringZ(datum) else getDatumTextSliceZ(datum);
+    return switch (oid) {
+        pg.CHAROID => getDatumCharZ(datum),
+        pg.NAMEOID => getDatumNameZ(datum),
+        pg.CSTRINGOID => getDatumCStringZ(datum),
+        else => getDatumTextSliceZ(datum),
+    };
+}
+
+pub fn getDatumCharZ(datum: pg.Datum) ![:0]const u8 {
+    var buffer = try mem.PGCurrentContextAllocator.alloc(u8, 2);
+    buffer[0] = pg.DatumGetChar(datum);
+    buffer[1] = 0;
+    return buffer[0..1 :0];
+}
+
+pub fn getDatumNameZ(datum: pg.Datum) ![:0]const u8 {
+    const name = pg.DatumGetName(datum);
+    const data = name.*.data[0..];
+    const len = std.mem.indexOfScalar(u8, data, 0) orelse
+        return err.PGError.StringLengthMismatch;
+    return data[0..len :0];
 }
 
 pub inline fn getDatumCStringZ(datum: pg.Datum) ![:0]const u8 {
@@ -276,25 +304,47 @@ pub inline fn getDatumCStringZ(datum: pg.Datum) ![:0]const u8 {
 /// All allocations will be performed in the Current Memory Context.
 ///
 pub fn getDatumTextSliceZ(datum: pg.Datum) ![:0]const u8 {
-    const ptr = pg.DatumGetTextPP(datum);
+    const original: [*c]pg.struct_varlena = @ptrCast(@alignCast(pg.DatumGetPointer(datum)));
+    const unpacked = try err.wrap(pg.pg_detoast_datum_packed, .{original});
+    defer if (unpacked != original) pg.pfree(unpacked);
 
-    const unpacked = try err.wrap(pg.pg_detoast_datum_packed, .{ptr});
     const len = varatt.VARSIZE_ANY_EXHDR(unpacked);
     var buffer = try mem.PGCurrentContextAllocator.alloc(u8, len + 1);
     std.mem.copyForwards(u8, buffer, varatt.VARDATA_ANY(unpacked)[0..len]);
     buffer[len] = 0;
-    if (unpacked != ptr) {
-        pg.pfree(unpacked);
-    }
     return buffer[0..len :0];
 }
 
 pub fn sliceToDatumStringLikeZ(slice: [:0]const u8, oid: pg.Oid) !pg.Datum {
-    return if (useStringPointer(oid)) sliceToDatumCStringZ(slice) else sliceToDatumTextZ(slice);
+    return switch (oid) {
+        pg.CHAROID => sliceToDatumChar(slice),
+        pg.NAMEOID => sliceToDatumName(slice),
+        pg.CSTRINGOID => sliceToDatumCStringZ(slice),
+        else => sliceToDatumTextZ(slice),
+    };
 }
 
 pub fn sliceToDatumStringLike(slice: []const u8, oid: pg.Oid) !pg.Datum {
-    return if (useStringPointer(oid)) sliceToDatumCString(slice) else sliceToDatumText(slice);
+    return switch (oid) {
+        pg.CHAROID => sliceToDatumChar(slice),
+        pg.NAMEOID => sliceToDatumName(slice),
+        pg.CSTRINGOID => sliceToDatumCString(slice),
+        else => sliceToDatumText(slice),
+    };
+}
+
+pub fn sliceToDatumChar(slice: []const u8) !pg.Datum {
+    if (slice.len != 1) return err.PGError.StringLengthMismatch;
+    return pg.CharGetDatum(slice[0]);
+}
+
+pub fn sliceToDatumName(slice: []const u8) !pg.Datum {
+    if (slice.len >= pg.NAMEDATALEN) return err.PGError.StringLengthMismatch;
+
+    const name = try mem.PGCurrentContextAllocator.create(pg.NameData);
+    name.* = .{};
+    std.mem.copyForwards(u8, name.data[0..slice.len], slice);
+    return pg.PointerGetDatum(name);
 }
 
 pub inline fn sliceToDatumCString(slice: []const u8) !pg.Datum {
@@ -317,8 +367,85 @@ pub inline fn sliceToDatumTextZ(slice: [:0]const u8) !pg.Datum {
 }
 
 pub inline fn useStringPointer(oid: pg.Oid) bool {
-    return switch (oid) {
-        pg.CHAROID, pg.NAMEOID, pg.CSTRINGOID => true,
-        else => false,
-    };
+    return oid == pg.CSTRINGOID;
 }
+
+pub const TestSuite_Datum = struct {
+    fn expectRoundTrip(value: anytype) !void {
+        const nullable = try toNullableDatum(value);
+        try std.testing.expect(!nullable.isnull);
+        try std.testing.expectEqual(value, try fromNullableDatum(@TypeOf(value), nullable));
+    }
+
+    pub fn testPrimitiveRoundTrips() !void {
+        try expectRoundTrip(false);
+        try expectRoundTrip(true);
+        try expectRoundTrip(@as(i8, std.math.minInt(i8)));
+        try expectRoundTrip(@as(i8, std.math.maxInt(i8)));
+        try expectRoundTrip(@as(i16, std.math.minInt(i16)));
+        try expectRoundTrip(@as(i16, std.math.maxInt(i16)));
+        try expectRoundTrip(@as(i32, std.math.minInt(i32)));
+        try expectRoundTrip(@as(i32, std.math.maxInt(i32)));
+        try expectRoundTrip(@as(i64, std.math.minInt(i64)));
+        try expectRoundTrip(@as(i64, std.math.maxInt(i64)));
+        try expectRoundTrip(@as(u8, std.math.maxInt(u8)));
+        try expectRoundTrip(@as(u16, std.math.maxInt(u16)));
+        try expectRoundTrip(@as(u32, std.math.maxInt(u32)));
+        try expectRoundTrip(@as(u64, std.math.maxInt(u64)));
+        try expectRoundTrip(@as(f32, -1.25));
+        try expectRoundTrip(@as(f64, 42.5));
+    }
+
+    pub fn testOptionalNulls() !void {
+        const none: ?i32 = null;
+        const nullable = try toNullableDatum(none);
+        try std.testing.expect(nullable.isnull);
+        try std.testing.expectEqual(@as(pg.Datum, 0), nullable.value);
+        try std.testing.expectEqual(@as(?i32, null), try fromNullableDatum(?i32, nullable));
+        try std.testing.expectError(err.PGError.UnexpectedNullValue, fromNullableDatum(i32, nullable));
+
+        const some: ?i32 = 42;
+        try std.testing.expectEqual(some, try fromNullableDatum(?i32, try toNullableDatum(some)));
+    }
+
+    pub fn testStringRoundTrips() !void {
+        const literal = "zig";
+        const literal_datum = try toNullableDatum(literal);
+        try std.testing.expectEqualStrings(literal, try fromNullableDatum([:0]const u8, literal_datum));
+
+        const empty: []const u8 = "";
+        const empty_datum = try toNullableDatumWithOID(empty, pg.TEXTOID);
+        try std.testing.expectEqualStrings(empty, try fromNullableDatumWithOID([]const u8, empty_datum, pg.TEXTOID));
+
+        const text: [:0]const u8 = "hello";
+        const text_datum = try toNullableDatumWithOID(text, pg.TEXTOID);
+        try std.testing.expectEqualStrings(text, try fromNullableDatumWithOID([:0]const u8, text_datum, pg.TEXTOID));
+
+        const char: [:0]const u8 = "Z";
+        const char_datum = try toNullableDatumWithOID(char, pg.CHAROID);
+        try std.testing.expectEqual(pg.CharGetDatum('Z'), char_datum.value);
+        try std.testing.expectEqualStrings(char, try fromNullableDatumWithOID([:0]const u8, char_datum, pg.CHAROID));
+        try std.testing.expectError(
+            err.PGError.StringLengthMismatch,
+            toNullableDatumWithOID(text, pg.CHAROID),
+        );
+
+        const name_datum = try toNullableDatumWithOID(text, pg.NAMEOID);
+        try std.testing.expectEqualStrings(text, try fromNullableDatumWithOID([:0]const u8, name_datum, pg.NAMEOID));
+        const name = pg.DatumGetName(name_datum.value);
+        try std.testing.expectEqual(@as(u8, 0), name.*.data[0..][text.len]);
+
+        const cstring_datum = try toNullableDatumWithOID(text, pg.CSTRINGOID);
+        try std.testing.expectEqualStrings(text, try fromNullableDatumWithOID([:0]const u8, cstring_datum, pg.CSTRINGOID));
+    }
+
+    pub fn testTextConversionCopiesPayload() !void {
+        const value = "copied text";
+        const text = pg.cstring_to_text_with_len(value.ptr, @intCast(value.len));
+        const result = try getDatumTextSliceZ(pg.PointerGetDatum(text));
+
+        try std.testing.expectEqualStrings(value, result);
+        try std.testing.expectEqual(@as(u8, 0), result.ptr[result.len]);
+        try std.testing.expect(@intFromPtr(result.ptr) != @intFromPtr(varatt.VARDATA_ANY(text)));
+    }
+};

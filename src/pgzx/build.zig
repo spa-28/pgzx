@@ -285,9 +285,9 @@ pub fn getExtensionDir(b: *Build) []const u8 {
 
 pub fn getPGRegressPath(b: *Build) []const u8 {
     b.paths.pg_regress_path = b.paths.pg_regress_path orelse blk: {
-        const pkglib = b.getPackageLibDir();
-        const pg_regress = "pgxs/src/test/regress/pg_regress";
-        break :blk b.std_build.pathJoin(&[_][]const u8{ pkglib, pg_regress });
+        const pgxs = b.runPGConfig("--pgxs");
+        const pgxs_src_dir = std.fs.path.dirname(std.fs.path.dirname(pgxs).?).?;
+        break :blk b.std_build.pathJoin(&[_][]const u8{ pgxs_src_dir, "test/regress/pg_regress" });
     };
     return b.paths.pg_regress_path.?;
 }
@@ -447,8 +447,6 @@ pub fn addRegress(b: *Build, options: PGRegressOptions) *Step.Run {
         "--inputdir",
         root_dir,
         "--outputdir",
-        root_dir,
-        "--expecteddir",
         root_dir,
     });
 

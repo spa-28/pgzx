@@ -60,30 +60,28 @@ fn readArg(comptime T: type, fcinfo: pg.FunctionCallInfo, argNum: u32) !readArgT
         return fcinfo;
     }
     const converter = comptime datum.findConv(T);
-    const oid = try err.wrap(pg.get_fn_expr_argtype, .{ fcinfo.*.flinfo, @as(c_int, @intCast(argNum)) });
     const ndatum = try mustGetArgNullable(fcinfo, argNum);
+    const oid = try err.wrap(pg.get_fn_expr_argtype, .{ fcinfo.*.flinfo, @as(c_int, @intCast(argNum)) });
     return converter.fromNullableDatumWithOID(ndatum, oid);
 }
 
 fn readOptionalArg(comptime T: type, fcinfo: pg.FunctionCallInfo, argNum: u32) !?T {
-    if (isNullArg(fcinfo, argNum)) {
-        return null;
-    }
+    const ndatum = try mustGetArgNullable(fcinfo, argNum);
+    if (ndatum.isnull) return null;
     return readArg(T, fcinfo, argNum);
 }
 
 pub inline fn mustGetArgNullable(fcinfo: pg.FunctionCallInfo, argNum: u32) !pg.NullableDatum {
-    if (fcinfo.*.nargs < argNum) {
+    if (argNum >= fcinfo.*.nargs) {
         return error.NotEnoughArguments;
     }
     return fcinfo.*.args()[argNum];
 }
 
 pub inline fn mustGetArgDatum(fcinfo: pg.FunctionCallInfo, argNum: u32) !pg.Datum {
-    if (isNullArg(fcinfo, argNum)) {
-        return error.ArgumentIsNull;
-    }
-    return getArgDatum(fcinfo, argNum);
+    const ndatum = try mustGetArgNullable(fcinfo, argNum);
+    if (ndatum.isnull) return error.ArgumentIsNull;
+    return ndatum.value;
 }
 
 pub inline fn getArgDatum(fcinfo: pg.FunctionCallInfo, argNum: u32) pg.Datum {

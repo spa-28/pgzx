@@ -2,6 +2,8 @@
   pkgs,
   lib,
   project,
+  postgresql,
+  postgresVersion,
   ...
 }: let
   menu = ''
@@ -39,7 +41,7 @@ in {
       # Get pgzx development scripts like pglocal, pginit, pgstart...
       # We also need a local postgres for pglocal that we install in the devshell.
       pkgs.pgzx_scripts
-      pkgs.postgresql_16_jit
+      postgresql
 
       # Additional Zig tools.
       pkgs.zls # Zig Language Server
@@ -49,8 +51,10 @@ in {
   shellHook = ''
     export PRJ_ROOT=$PWD
     export PG_HOME=$PRJ_ROOT/out/default
-    export PATH="$PG_HOME/lib/postgresql/pgxs/src/test/regress:$PATH"
-    export PATH="$PG_HOME/bin:$PRJ_ROOT/dev/scripts:$PATH"
+    export PGZX_POSTGRES_VERSION=${postgresVersion}
+    export PGZX_SOURCE_PG_CONFIG=${postgresql}/bin/pg_config
+    export PATH="$PG_HOME/lib/pgxs/src/test/regress:$PATH"
+    export PATH="$PG_HOME/bin:$PATH"
     export NIX_PGLIBDIR=$PG_HOME/lib
 
     alias root='cd $PRJ_ROOT'

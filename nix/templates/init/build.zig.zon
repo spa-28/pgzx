@@ -1,5 +1,6 @@
 .{
-    .name = "my_extension",
+    .name = .my_extension,
+    .fingerprint = 0x79e633e30d1ac036,
     .version = "0.1.0",
     .paths = .{
         "extension",

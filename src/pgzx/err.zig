@@ -132,6 +132,7 @@ pub const Context = struct {
             pg.PG_exception_stack = &self.local_sigjump_buf;
             return true;
         } else {
+            self.pg_try_end();
             return false;
         }
     }
@@ -188,3 +189,69 @@ inline fn wrap_ret(comptime f: type) type {
     }
     return ti.@"fn".return_type.?;
 }
+
+fn raiseTestError() void {
+    const src = @src();
+    if (pg.errstart(pg.ERROR, null)) {
+        _ = pg.errcode(pg.ERRCODE_INTERNAL_ERROR);
+        _ = pg.errmsg("expected pgzx error");
+        pg.errfinish(src.file, @intCast(src.line), src.fn_name);
+    }
+}
+
+fn copyAndFlushErrorData() [*c]pg.ErrorData {
+    const error_data = pg.CopyErrorData();
+    pg.FlushErrorState();
+    return error_data;
+}
+
+pub const TestSuite_Err = struct {
+    pub fn testWrapSuccess() !void {
+        const helper = struct {
+            fn add(left: c_int, right: c_int) c_int {
+                return left + right;
+            }
+        };
+
+        try std.testing.expectEqual(@as(c_int, 42), try wrap(helper.add, .{ 19, 23 }));
+    }
+
+    pub fn testContextCatch() !void {
+        const exception_stack = pg.PG_exception_stack;
+        const context_stack = pg.error_context_stack;
+        const memory_context = pg.CurrentMemoryContext;
+
+        var context = Context.init();
+        defer context.deinit();
+        if (context.pg_try()) {
+            raiseTestError();
+            return error.ExpectedPostgresError;
+        }
+
+        const state_restored =
+            pg.PG_exception_stack == exception_stack and
+            pg.error_context_stack == context_stack and
+            pg.CurrentMemoryContext == memory_context;
+        const error_data = copyAndFlushErrorData();
+        if (error_data == null) return error.MissingErrorData;
+        defer pg.FreeErrorData(error_data);
+
+        try std.testing.expect(state_restored);
+        try std.testing.expectEqual(pg.ERRCODE_INTERNAL_ERROR, error_data.*.sqlerrcode);
+        try std.testing.expectEqualStrings("expected pgzx error", std.mem.span(error_data.*.message));
+    }
+
+    pub fn testWrapPostgresError() !void {
+        wrap(raiseTestError, .{}) catch |caught| {
+            const error_data = copyAndFlushErrorData();
+            if (error_data == null) return error.MissingErrorData;
+            defer pg.FreeErrorData(error_data);
+
+            try std.testing.expectEqual(error.PGErrorStack, caught);
+            try std.testing.expectEqual(pg.ERRCODE_INTERNAL_ERROR, error_data.*.sqlerrcode);
+            try std.testing.expectEqualStrings("expected pgzx error", std.mem.span(error_data.*.message));
+            return;
+        };
+        return error.ExpectedPostgresError;
+    }
+};

@@ -512,7 +512,11 @@ pub const TestSuite_HTab = struct {
                 // const str_from = std.mem.span(char_ptr_from);
                 // std.log.debug("strcpy:  to={*}, from='{s}', sz={}", .{ to, str_from, sz });
 
-                _ = pg.strlcpy(char_ptr_to, char_ptr_from, @intCast(sz));
+                if (sz == 0) return to;
+                const source = char_ptr_from[0..sz];
+                const len = std.mem.indexOfScalar(u8, source, 0) orelse sz - 1;
+                std.mem.copyForwards(u8, char_ptr_to[0..len], source[0..len]);
+                char_ptr_to[len] = 0;
                 return to;
             }
         };

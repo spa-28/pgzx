@@ -301,9 +301,11 @@ fn logAuditEvent(event: *AuditEvent) !void {
     var string = std.ArrayList(u8).empty;
     defer string.deinit(pgzx.mem.PGCurrentContextAllocator);
     var str_writer: std.Io.Writer.Allocating = .fromArrayList(pgzx.mem.PGCurrentContextAllocator, &string);
+    defer str_writer.deinit();
 
     try eventToJSON(event, &str_writer.writer);
     try str_writer.writer.flush();
+    string = str_writer.toArrayList();
 
     std.log.debug("pgaudit_zig: logAuditEvent: {s}\n", .{string.items});
 }
@@ -353,9 +355,11 @@ const Tests = struct {
         var string = std.ArrayList(u8).empty;
         defer string.deinit(allocator);
         var str_writer: std.Io.Writer.Allocating = .fromArrayList(allocator, &string);
+        defer str_writer.deinit();
 
         try eventToJSON(&event, &str_writer.writer);
         try str_writer.writer.flush();
+        string = str_writer.toArrayList();
 
         const expected =
             \\{"operation": "CMD_SELECT", "commandText": "select test()"}
